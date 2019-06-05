@@ -1,0 +1,14 @@
+A simple CCLoader-compatible mod to allow to add more locales/translations.
+
+You will need another mod to provide the locale that you want.
+
+Once locales are installed, they can be selected by changing the
+language in the options.
+
+We cannot guarantee that the original program will revert to a known locale
+after removing this mod, so switch back to english before removing this.
+
+This software is licensed under the MIT license. However, please check that
+your local judiriction does not restrict the use of such software.
+
+CCLoader: https://github.com/CCDirectLink/CCLoader
