@@ -18,10 +18,10 @@ class LocalizeMe {
 	 * options can contains:
 	 * - everything from LANG_DETAILS
 	 * - "from_locale" indicate from which basic locale this was translated
-	 *                 from.  Used for 'orig' check, decryption or langfile
+	 *		   from.  Used for 'orig' check, decryption or langfile
 	 *		   patching.
 	 * - "map_file" must be either an URL to a JSON object or a function
-	 *              returning a promise resolving to a JSON object or
+	 *		returning a promise resolving to a JSON object or
 	 *		function.  The function/JSON object must map an asset
 	 *		file path to a translation pack URL or function.
 	 *		these URL/function must return a JSON or function
@@ -57,7 +57,7 @@ class LocalizeMe {
 		var count = 0;
 		for (var locale in game_lang_detail) {
 			if (this.added_locales[locale]) {
-				console.warn("Language " + name 
+				console.warn("Language " + name
 					     + " already there");
 				delete this.added_locales[locale];
 			}
@@ -183,14 +183,14 @@ class LocalizeMe {
 	 * these optional fields:
 	 *
 	 * - orig: the original text from from_locale, if the loaded file
-	 *         does not match this string, then the translation is likely
-	 *         stale and should not be used
+	 *	    does not match this string, then the translation is likely
+	 *	    stale and should not be used
 	 * - text: the translated text to use.
 	 * - ciphertext: the translated text, encrypted with AES-CBC with
-	 *               the key equal to MD5(original text). This idiotic
+	 *		 the key equal to MD5(original text). This idiotic
 	 *		 scheme is mainly here for copyright reasons.
 	 * - mac: a HMAC-MD5 of the translated text with key MD5(original text)
-	 *        for detecting stale translations and not returning garbage.
+	 *	  for detecting stale translations and not returning garbage.
 	 *
 	 * If a translation result is unknown, null or undefined is returned.
 	 */
@@ -225,7 +225,7 @@ class LocalizeMe {
 					cb(json[index], index);
 	}
 
-	/** 
+	/**
 	 * Iterate over all lang labels found in the object and call the
 	 * callback with (lang_label, dict_path).
 	 * It should be possible to modify the lang_label inside the callback.
@@ -294,7 +294,7 @@ class LocalizeMe {
 							       iv:key})
 		var text = CryptoJS.AES.decrypt(param, key,
 						{ mode: CryptoJS.mode.CBC,
-					          padding: CryptoJS.pad.Pkcs7,
+						  padding: CryptoJS.pad.Pkcs7,
 						  iv: key}
 		);
 		if (trans_result.mac) {
@@ -304,7 +304,7 @@ class LocalizeMe {
 			// wait, CryptoJS.HmacMD5 does not work ? Crap.
 			// var correct_mac = CryptoJS.HmacMD5(text, key);
 			var correct_mac = this.hmacmd5(text, key);
-			
+
 			var mac = CryptoJS.enc.Base64.stringify(correct_mac);
 			if (trans_result.mac != mac)
 				// stale translation
@@ -449,7 +449,7 @@ class LocalizeMe {
 				continue;
 			}
 			var lang_name = this.added_locales[locale].language;
-			array.push(lang_name[current_locale] 
+			array.push(lang_name[current_locale]
 				   || lang_name[locale]
 				   || "ERROR NO LANGUAGE");
 		}
@@ -543,7 +543,7 @@ document.addEventListener('postload', () => {
 				locale = "en_US";
 			}
 
-			// Now resume normal processing, which is to actually 
+			// Now resume normal processing, which is to actually
 			// set the variable.
 			if (!locale)
 				// native locale, we don't have access to
@@ -605,7 +605,7 @@ document.addEventListener('postload', () => {
 		var pick = ()=>lea[Math.floor(Math.random() * lea.length)];
 		var leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
 		var tdp = a => "lang/sc/gui.en_LEA.json/labels/title-screen/"+a;
-		
+
 		var sample = { // sample pack
 			[tdp("start")]:{ text:"Hi Lea!" },
 			[tdp("continue")]:"Hi!",
@@ -619,8 +619,8 @@ document.addEventListener('postload', () => {
 			},
 			[tdp("pressStart")]:{ orig: "stale", text:"BAAAAAAAD"},
 			[tdp("load")]:{
-				 ciphertext:"q78V2H5p7aWtQYLiXKOMJQ==",
-				 mac:"garbagegarbagegarbageg=="
+				ciphertext:"q78V2H5p7aWtQYLiXKOMJQ==",
+				mac:"garbagegarbagegarbageg=="
 			}
 		};
 		window.localizeMe.add_locale("en_LEA",
@@ -628,8 +628,8 @@ document.addEventListener('postload', () => {
 			 map_file: () => (path) => (dict_path) => sample,
 			 missing_cb: leaize,
 			 language: {
-				 en_LEA: "Hi Lea!",
-				 en_US: "Lea's English"
+				en_LEA: "Hi Lea!",
+				en_US: "Lea's English"
 			 }});
 	}
 });
