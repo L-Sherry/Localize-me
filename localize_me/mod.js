@@ -37,9 +37,13 @@ class LocalizeMe {
 	 *		used in the language options. If a language is missing
 	 *		then language[locale] will be used by default.  langUid
 	 *		is ignored by this function.
+	 * - "text_filter" an optional function called for each translated
+	 *		   string that should return the string to use.  Can be
+	 *		   used to change the encoding of the text to match the
+	 *		   font or apply similar transformations.
 	 *
 	 * This function should be called in postload. This object is created
-	 * during preload, so it will work.
+	 * during preload, so it will be availlable.
 	 */
 	add_locale(name, options) {
 		if (name in this.added_locales) {
@@ -325,10 +329,14 @@ class LocalizeMe {
 	get_text_to_display(trans_result, lang_label_or_string, dict_path) {
 		var ret = this.get_translated_string(trans_result,
 						     lang_label_or_string);
-		if (ret !== null)
+		var localedef = this.added_locales[this.current_locale];
+		if (ret !== null) {
+			if (localedef.text_filter)
+				ret = localedef.text_filter(ret, trans_result);
 			return ret;
+		}
 
-		var missing = this.added_locales[this.loaded_locale].missing_cb;
+		var missing = localedef.missing_cb;
 		if (missing)
 			ret = missing(lang_label_or_string, dict_path);
 		if (!ret)
@@ -608,7 +616,7 @@ document.addEventListener('postload', () => {
 
 		var sample = { // sample pack
 			[tdp("start")]:{ text:"Hi Lea!" },
-			[tdp("continue")]:"Hi!",
+			[tdp("continue")]:"Hz!",
 			[tdp("exit")]:{ orig:"Exit", text:"Bye!"},
 			[tdp("options")]:{
 				ciphertext:"bs3vYXPQ/u7rS+SticlLbQ==",
@@ -630,7 +638,9 @@ document.addEventListener('postload', () => {
 			 language: {
 				en_LEA: "Hi Lea!",
 				en_US: "Lea's English"
-			 }});
+			 },
+			 text_filter: text => text.replace("z", "i")
+			});
 	}
 });
 
