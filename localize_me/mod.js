@@ -50,7 +50,16 @@ class LocalizeMe {
 	 * - "text_filter" an optional function called for each translated
 	 *		   string that should return the string to use.  Can be
 	 *		   used to change the encoding of the text to match the
-	 *		   font or apply similar transformations.
+	 *		   font or apply similar transformations.  Called with
+	 *		   (text, translation object)
+	 * - "patch_font" an optional function called for each loaded font.
+	 *		  Can be used to change the encoding of displayed text,
+	 *		  add missing characters or more.  Called with
+	 *		  (loaded_image (not scaled), context), where context
+	 *		  is unique per multifont and contains the two methods:
+	 *		  get_char_pos(c) -> { x, y, width, height } to get
+	 *		  the position of a char in loaded_image and
+	 *		  set_char_pos(c, { x, y, width, height }) to change it.
 	 *
 	 * This function should be called in postload. This object is created
 	 * during preload, so it will be availlable.
@@ -532,8 +541,45 @@ class LocalizeMe {
 		this.current_locale = locale;
 		this.language_known_resolve(locale);
 	}
+
+	// Caller should arrange for the current locale to be known first.
+	apply_font_patch(canvas_source, context) {
+		var localedef = this.added_locales[this.current_locale];
+		if (!localedef || !localedef.patch_font)
+			return canvas_source;
+		var ret = localedef.patch_font(canvas_source, context);
+		if (!ret) {
+			console.warn("patch_font() returned nothing");
+			ret = canvas_source;
+		}
+		return ret;
+	}
 }
 window.localizeMe = new LocalizeMe();
+
+class FontPatcher {
+	constructor() {
+		this.base_image_loaded = new Promise((resolve) => {
+			this.resolve = resolve;
+		});
+		this.context = null;
+	}
+
+	metrics_loaded(get_char_pos, set_char_pos) {
+		this.context = { get_char_pos, set_char_pos };
+		this.resolve(this);
+	}
+	patch_image_sync(image) {
+		return window.localizeMe.apply_font_patch(image,
+							  this.context);
+	}
+
+	// Resolves an patched canvas/image whatever.
+	async patch_image_async(image) {
+		await this.base_image_loaded;
+		return this.patch_image_sync(image);
+	}
+}
 
 document.addEventListener('postload', () => {
 	var loc_me = window.localizeMe;
@@ -606,6 +652,72 @@ document.addEventListener('postload', () => {
 		});
 	});
 
+	// ig.Font
+	ig.module("localize_patch_font").requires(
+		"impact.base.font"
+	).defines(function() {
+		// We want to do two things here:
+		// - patch the flags
+		// ig.Font.inject({...})
+		// - patch the font to match the encoding of the locale.
+		ig.MultiFont.inject({
+			'init': function(...varargs) {
+				this.parent.apply(this, varargs);
+				this.LOCALIZEME = new FontPatcher();
+			},
+			'pushColorSet': function(key, img, color) {
+				this.parent(key, img, color);
+
+				var old_onload = img.onload;
+				var context = this.LOCALIZEME;
+				// let's patch those images only. let the other
+				// mods patch up everything else :)
+				img.onload = function(a) {
+					context.patch_image_async(this.data
+					).then((result) => {
+						this.data = result;
+					}).then(old_onload.bind(this, a));
+				};
+			},
+			'onload': function(img) {
+				// then() will call _loadMetrics
+				var then = this.parent.bind(this, img);
+				loc_me.wait_for_language_known().then(then);
+			},
+			'_loadMetrics': function(img) {
+				this.parent(img);
+				var get_char = ((c) => {
+					var index = c.charCodeAt(0);
+					index -= this.firstChar;
+					// don't ask about the +1.
+					var width = this.widthMap[index] + 1;
+					var height = this.charHeight;
+					var x = this.indicesX[index];
+					var y = this.indicesY[index];
+					return { x, y, width, height };
+				}).bind(this);
+				var set_char = ((c, rect) => {
+					var index = c.charCodeAt(0);
+					index -= this.firstChar;
+					this.indicesX[index] = rect.x;
+					this.indicesY[index] = rect.y;
+					this.widthMap[index] = rect.width - 1;
+					if (rect.height != this.charHeight)
+						console.warn("bad height for",
+							     c);
+				}).bind(this);
+				this.LOCALIZEME.metrics_loaded(get_char,
+							       set_char);
+				if (img !== this.data)
+					console.warn("localizeme font failed");
+
+				this.data = this.LOCALIZEME.patch_image_sync(
+					img
+				);
+			}
+		});
+	})
+
 
 	// While simplify already provide some stuff to patch requests,
 	// it's said that simplify is deprecated ... whatever.
@@ -675,7 +787,12 @@ document.addEventListener('postload', () => {
 				en_LEA: "Hi Lea!",
 				en_US: "Lea's English"
 			 },
-			 text_filter: text => text.replace("z", "i")
+			 text_filter: text => text.replace("z", "i"),
+			 patch_font: (source, context) => {
+				var aa = context.get_char_pos('é');
+				context.set_char_pos('e', aa);
+				return source;
+			 }
 			});
 	}
 });
