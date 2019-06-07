@@ -108,7 +108,7 @@ class LocalizeMe {
 			req.onerror = reject;
 			req.onreadystatechange = () => {
 				if (req.readyState !== req.DONE
-				    || req.status != 200)
+				    || req.status !== 200)
 					return; // reject ?
 				resolve(req.responseText);
 			};
@@ -231,7 +231,7 @@ class LocalizeMe {
 	 * It should be possible to modify the lang_label inside the callback.
 	 */
 	for_each_langlabels(json, dict_path_prefix, callback) {
-		if (json != null && json[this.from_locale])
+		if (json !== null && json[this.from_locale])
 			return callback(json, dict_path_prefix);
 		this.walk_json(json, (value, index) => {
 			var sub = dict_path_prefix + '/' + index;
@@ -306,7 +306,7 @@ class LocalizeMe {
 			var correct_mac = this.hmacmd5(text, key);
 
 			var mac = CryptoJS.enc.Base64.stringify(correct_mac);
-			if (trans_result.mac != mac)
+			if (trans_result.mac !== mac)
 				// stale translation
 				return null;
 		}
@@ -325,7 +325,7 @@ class LocalizeMe {
 	get_text_to_display(trans_result, lang_label_or_string, dict_path) {
 		var ret = this.get_translated_string(trans_result,
 						     lang_label_or_string);
-		if (ret != null)
+		if (ret !== null)
 			return ret;
 
 		var missing = this.added_locales[this.loaded_locale].missing_cb;
@@ -572,7 +572,7 @@ document.addEventListener('postload', () => {
 		relpath = old_url.slice(relpath.length);
 
 		var is_lang_label = true;
-		if (options.context.constructor == ig.Lang) {
+		if (options.context.constructor === ig.Lang) {
 			var lang = ig.currentLang;
 			options.url = loc_me.get_replacement_url(old_url, lang);
 			console.log("ajax:", relpath, "->", options.url);
