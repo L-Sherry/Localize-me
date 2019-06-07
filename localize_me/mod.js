@@ -1,5 +1,7 @@
 (() => {
 	"use strict";
+
+// This thing is turning into a god class...
 class LocalizeMe {
 	constructor() {
 		this.added_locales = {};
@@ -7,11 +9,19 @@ class LocalizeMe {
 		this.locales_by_index = {};
 		this.locale_count = 0;
 
-		this.loaded_locale = null;
+		this.current_locale = null;
 		this.from_locale = null;
 
 		this.map_file = null;
 		this.url_cache = {};
+
+		// no defer ?
+		this.language_known = new Promise((resolve) => {
+			this.language_known_resolve = resolve;
+		});
+		this.language_known.then((locale) => {
+			console.log("final locale:", locale);
+		});
 	}
 	/*
 	 * Locale name must only contain the language and country,
@@ -149,12 +159,14 @@ class LocalizeMe {
 	 *
 	 * the map_file function is cached for later use.
 	 */
-	async get_map_file(current_locale) {
-		if (current_locale === this.loaded_locale)
+	async get_map_file() {
+		if (this.current_locale === null)
+			await this.language_known;
+		if (this.map_file)
 			// may return a promise not resolved yet.
 			return this.map_file;
 
-		var localedef = this.added_locales[current_locale];
+		var localedef = this.added_locales[this.current_locale];
 		var url_or_func = localedef.map_file;
 
 		this.map_file = this.fetch_or_call(url_or_func)
@@ -169,7 +181,6 @@ class LocalizeMe {
 		    });
 
 		// it's not loaded yet, but the promise will eventually resolve
-		this.loaded_locale = current_locale;
 		this.from_locale = localedef.from_locale || 'en_US';
 		return this.map_file;
 	}
@@ -198,9 +209,9 @@ class LocalizeMe {
 	 *
 	 * If a translation result is unknown, null or undefined is returned.
 	 */
-	async get_transpack(json_path, json, current_locale) {
-		var map_file = await this.get_map_file(current_locale);
-		var url_or_func = map_file(json_path, json, current_locale);
+	async get_transpack(json_path, json) {
+		var map_file = await this.get_map_file();
+		var url_or_func = map_file(json_path, json);
 		var result;
 		if (url_or_func) {
 			result = await this.fetch_or_call(url_or_func);
@@ -351,19 +362,19 @@ class LocalizeMe {
 	 *
 	 * Resolves to the json parameter, possibly modified.
 	 */
-	async patch_langlabels(path, json, current_locale) {
-		var locale = this.added_locales[current_locale];
+	async patch_langlabels(path, json) {
+		var locale = this.added_locales[this.current_locale];
 		if (!locale)
 			return json;
 
-		var pack = await this.get_transpack(path, json, current_locale)
+		var pack = await this.get_transpack(path, json)
 				     .catch(() => (() => null));
 
 		this.for_each_langlabels(json, path,
 					 (lang_label, dict_path) => {
 			var trans = pack(dict_path, lang_label);
 			var text = this.get_text_to_display(trans, lang_label);
-			lang_label[current_locale] = text;
+			lang_label[this.current_locale] = text;
 		});
 		return json;
 	}
@@ -374,11 +385,12 @@ class LocalizeMe {
 	 * This is like get_transpack(), except this also handles if the
 	 * translation pack is a full langfile replacement.
 	 */
-	async get_langfile_pack(path, json, current_locale) {
-		var pack = await this.get_transpack(path, json, current_locale)
+	async get_langfile_pack(path, json) {
+		var pack = await this.get_transpack(path, json)
 				     .catch((a) => {
-					     console.log("failed path", path,a);
-					     return () => null
+					     console.warn("failed path", path,
+							  a);
+					     return () => null;
 				     });
 		if (pack("DOCTYPE") !== "STATIC-LANG-FILE")
 			return pack; // normal pack.
@@ -439,7 +451,7 @@ class LocalizeMe {
 	 * to exist in the language array.  This allows those locales to be
 	 * selected in the language settings.
 	 */
-	patch_language_list(gui_langfile_json, current_locale) {
+	patch_language_list(gui_langfile_json) {
 		var array = gui_langfile_json.labels.options.language.group;
 		if (array.constructor !== Array) {
 			console.error("Could not patch language array",
@@ -457,7 +469,7 @@ class LocalizeMe {
 				continue;
 			}
 			var lang_name = this.added_locales[locale].language;
-			array.push(lang_name[current_locale]
+			array.push(lang_name[this.current_locale]
 				   || lang_name[locale]
 				   || "ERROR NO LANGUAGE");
 		}
@@ -470,18 +482,17 @@ class LocalizeMe {
 	 *
 	 * Resolves to a modified json object.
 	 */
-	async patch_langfile(path, json, current_locale) {
+	async patch_langfile(path, json) {
 
-		if (this.added_locales[current_locale]) {
-			var pack = await this.get_langfile_pack(path, json,
-								current_locale);
+		if (this.added_locales[this.current_locale]) {
+			var pack = await this.get_langfile_pack(path, json);
 			await this.patch_langfile_from_pack(json, path, pack);
 		}
 		// patch the language list after patching the langfile,
 		// otherwise, the added languages will be considered
 		// as missing text.
 		if (path.startsWith("lang/sc/gui."))
-			this.patch_language_list(json, current_locale);
+			this.patch_language_list(json);
 		return json;
 	}
 
@@ -496,17 +507,30 @@ class LocalizeMe {
 	 *
 	 * Returns a possibly modified url.
 	 */
-	get_replacement_url(url, current_locale) {
-		var localedef = this.added_locales[current_locale];
+	get_replacement_url(url) {
+		if (this.current_locale === null)
+			console.error("need to patch url without locale set");
+		var localedef = this.added_locales[this.current_locale];
 
 		if (!localedef)
 			return url;
 
-		var new_url = url.replace(current_locale,
+		var new_url = url.replace(this.current_locale,
 					  localedef.from_locale);
 		if (new_url === url)
 			console.warn("Cannot find current locale in url", url);
 		return new_url;
+	}
+
+	/// Resolves to the final language once it is known for sure.
+	wait_for_language_known() {
+		return this.language_known;
+	}
+	/// Set the actual locale chosen by the game.
+	/// It should not change until the game restarts.
+	set_actual_locale(locale) {
+		this.current_locale = locale;
+		this.language_known_resolve(locale);
 	}
 }
 window.localizeMe = new LocalizeMe();
@@ -525,6 +549,7 @@ document.addEventListener('postload', () => {
 					  window.sc.LANGUAGE);
 	});
 
+	/// Patch the hidden struct defining the native locale -> index mapping.
 	ig.module("localize_patch_up_option_model").requires(
 		"game.feature.model.options-model"
 	).defines(function() {
@@ -568,6 +593,19 @@ document.addEventListener('postload', () => {
 		});
 	});
 
+	// ig.Lang, to find out when the locale is finally known.
+	// This is known in ig.main, and this constructor is called afterward.
+	ig.module("localize_language_finalized").requires(
+		"impact.base.lang"
+	).defines(function() {
+		ig.Lang.inject({
+			'init': function() {
+				this.parent();
+				loc_me.set_actual_locale(ig.currentLang);
+			}
+		});
+	});
+
 
 	// While simplify already provide some stuff to patch requests,
 	// it's said that simplify is deprecated ... whatever.
@@ -583,13 +621,11 @@ document.addEventListener('postload', () => {
 		if (options.context.constructor === ig.Lang) {
 			var lang = ig.currentLang;
 			options.url = loc_me.get_replacement_url(old_url, lang);
-			console.log("ajax:", relpath, "->", options.url);
 			is_lang_label = false;
 		}
 
 		var old_resolve = options.success;
 		var old_reject = options.error;
-		//console.log("ajax: fetching", relpath);
 
 		options.success = function(unpatched_json) {
 			var resolve = old_resolve.bind(this);
