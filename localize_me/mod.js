@@ -789,7 +789,7 @@ document.addEventListener('postload', () => {
 			 },
 			 text_filter: text => text.replace("z", "i"),
 			 patch_font: (source, context) => {
-				var aa = context.get_char_pos('é');
+				var aa = context.get_char_pos('\u00e9');
 				context.set_char_pos('e', aa);
 				return source;
 			 }
