@@ -8,6 +8,9 @@ language in the options.
 We cannot guarantee that the original program will revert to a known locale
 after removing this mod, so switch back to english before removing this.
 
+To create, modify or update translations, check out Localize-Me-Tools
+at https://github.com/L-Sherry/Localize-Me-Tools
+
 This software is licensed under the MIT license. However, please check that
 your local judiriction does not restrict the use of such software.
 
