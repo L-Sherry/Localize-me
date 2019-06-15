@@ -1,6 +1,10 @@
 (() => {
 	"use strict";
 
+/// Function returned by various methods when things are not found.
+/// This allows callers to either use it blindly or check if it not_found
+var not_found = () => null;
+
 // This thing is turning into a god class...
 class LocalizeMe {
 	constructor() {
@@ -229,7 +233,7 @@ class LocalizeMe {
 				result = dict_path => saveme[dict_path];
 			}
 		} else
-			result = () => null;
+			result = not_found;
 		return result;
 	}
 
@@ -377,7 +381,7 @@ class LocalizeMe {
 			return json;
 
 		var pack = await this.get_transpack(path, json)
-				     .catch(() => (() => null));
+				     .catch(() => not_found);
 
 		this.for_each_langlabels(json, path,
 					 (lang_label, dict_path) => {
@@ -399,7 +403,7 @@ class LocalizeMe {
 				     .catch((a) => {
 					     console.warn("failed path", path,
 							  a);
-					     return () => null;
+					     return not_found;
 				     });
 		if (pack("DOCTYPE") !== "STATIC-LANG-FILE")
 			return pack; // normal pack.
@@ -409,7 +413,7 @@ class LocalizeMe {
 		if (pack("feature") !== json["feature"]) {
 			console.error("mismatch between lang file feature :",
 				      pack("feature"), "!=", json["feature"]);
-			return () => null;
+			return not_found;
 		}
 		var labels = pack("labels");
 		return ((prefix, dict_path) => {
@@ -489,13 +493,20 @@ class LocalizeMe {
 	 *
 	 * path should be realive to assets/data/.
 	 *
+	 * If path is not found, the alternate path is tried next.
+	 *
 	 * Resolves to a modified json object.
 	 */
-	async patch_langfile(path, json) {
+	async patch_langfile(path, json, alt_path) {
 
 		if (this.added_locales[this.current_locale]) {
 			var pack = await this.get_langfile_pack(path, json);
-			await this.patch_langfile_from_pack(json, path, pack);
+			if (pack === not_found && alt_path) {
+				pack = await this.get_langfile_pack(alt_path,
+								    json);
+				path = alt_path;
+			}
+			this.patch_langfile_from_pack(json, path, pack);
 		}
 		// patch the language list after patching the langfile,
 		// otherwise, the added languages will be considered
@@ -724,16 +735,19 @@ document.addEventListener('postload', () => {
 	$.ajaxPrefilter("json", function(options) {
 		var old_url = options.url;
 
-		var relpath = ig.root + "data/";
-		if (!old_url.startsWith(relpath))
+		var base_path = ig.root + "data/";
+		if (!old_url.startsWith(base_path))
 			return options;
-		relpath = old_url.slice(relpath.length);
+		var relpath = old_url.slice(base_path.length);
+		var altrelpath = null;
 
 		var is_lang_label = true;
 		if (options.context.constructor === ig.Lang) {
 			var lang = ig.currentLang;
 			options.url = loc_me.get_replacement_url(old_url, lang);
 			is_lang_label = false;
+			altrelpath = relpath;
+			relpath = options.url.slice(base_path.length)
 		}
 
 		var old_resolve = options.success;
@@ -745,12 +759,11 @@ document.addEventListener('postload', () => {
 			var res;
 			if (is_lang_label)
 				res = loc_me.patch_langlabels(relpath,
-							      unpatched_json,
-							      ig.currentLang);
+							      unpatched_json);
 			else
 				res = loc_me.patch_langfile(relpath,
 							    unpatched_json,
-							    ig.currentLang);
+							    altrelpath);
 			res.then(resolve, reject);
 		};
 		return options;
