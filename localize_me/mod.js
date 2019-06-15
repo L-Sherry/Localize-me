@@ -44,6 +44,11 @@ class LocalizeMe {
 	 *		as translation objects to use.
 	 *		It is also possible to return an entire JSON object
 	 *		for lang files.
+	 * - "url_prefix" is an optional string, which is prepended to all
+	 *		       URL found in a map file.  Using something based
+	 *		       on document.currentScript.src allows your mod
+	 *		       to be relocatable. It should most of the time
+	 *		       end with '/'.
 	 * - "missing_cb" an optional function to call when a string has no
 	 *		  translation. parameters are a lang label or string
 	 *		  and the dict path.
@@ -184,13 +189,19 @@ class LocalizeMe {
 
 		this.map_file = this.fetch_or_call(url_or_func)
 		    .then(result => {
-			var ret;
-			if (typeof result !== "function")
-				ret = (url_to_patch) => result[url_to_patch];
-			else
-				ret = result;
-			this.map_file = ret;
-			return ret;
+			var map_func;
+			if (typeof result !== "function") {
+				var prefix = localedef.url_prefix || '';
+				map_func = (url_to_patch) => {
+					var ret = result[url_to_patch];
+					if (ret)
+						ret = prefix + ret;
+					return ret || null;
+				};
+			} else
+				map_func = result;
+			this.map_file = map_func;
+			return map_func;
 		    });
 
 		// it's not loaded yet, but the promise will eventually resolve
