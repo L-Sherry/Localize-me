@@ -780,11 +780,13 @@ document.addEventListener('postload', () => {
 		return options;
 	});
 
-	if (false) { // test
+	if (window.location.search.indexOf("en_LEA") !== -1) { // test
 		var lea = ["Hi", "Lea", "Why", "How", "Sorry"];
 		var pick = ()=>lea[Math.floor(Math.random() * lea.length)];
 		var leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
-		var tdp = a => "lang/sc/gui.en_LEA.json/labels/title-screen/"+a;
+		// note: since we accept any file, the first picked pack file
+		// will use en_US, not en_LEA...
+		var tdp = a => "lang/sc/gui.en_US.json/labels/title-screen/"+a;
 
 		var sample = { // sample pack
 			[tdp("start")]:{ text:"Hi Lea!" },
