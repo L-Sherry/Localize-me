@@ -603,7 +603,7 @@ class FontPatcher {
 	}
 }
 
-document.addEventListener('postload', () => {
+{
 	var loc_me = window.localizeMe;
 
 	// ig.LANG_DETAILS defined in game.config
@@ -821,6 +821,6 @@ document.addEventListener('postload', () => {
 			 }
 			});
 	}
-});
+}
 
 })();

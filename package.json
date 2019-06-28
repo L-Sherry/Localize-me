@@ -1,6 +1,6 @@
 {
 	"name":"Localize Me",
 	"description": "Add support for more locales, languages and translations",
-	"preload": "mod.js",
+	"postload": "mod.js",
 	"version": "0.3.1"
 }
