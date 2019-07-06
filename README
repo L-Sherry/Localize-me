@@ -3,10 +3,12 @@ A simple CCLoader-compatible mod to allow to add more locales/translations.
 You will need another mod to provide the locale that you want.
 
 Once locales are installed, they can be selected by changing the
-language in the options.
+language in the options.  Uninstalling this mod should be safe.
 
-We cannot guarantee that the original program will revert to a known locale
-after removing this mod, so switch back to english before removing this.
+This mod currently handles the following :
+- Adding more languages in the option menu
+- Loading translations and inserting them into the game
+- Optionally patching the PNG fonts to add more characters or improve them.
 
 To create, modify or update translations, check out Localize-Me-Tools
 at https://github.com/L-Sherry/Localize-Me-Tools

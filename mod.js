@@ -111,15 +111,14 @@ class LocalizeMe {
 		});
 	}
 
-	// Get a index for a given locale name, or 0 (english) if not found.
+	// Get a index for a given (added) locale name, or null if not found.
 	get_index_for_locale(locale) {
 		var options = this.added_locales[locale];
-		if (!options) {
-			console.error("unknown locale " + locale);
-			return 0;
-		}
+		if (!options)
+			return null;
 		return options.localizeme_global_index;
 	}
+
 	/**
 	 * @brief Get a locale name given an language index.
 	 *
@@ -630,19 +629,14 @@ class FontPatcher {
 			if (!this.values.hasOwnProperty("language")) {
 				var locale = ig.currentLang;
 				var index = loc_me.get_index_for_locale(locale);
+				if (index == null)
+					index = 0;
 				this.values.language = index;
 				console.log("Found missing locale " + locale);
 				console.log("Set index to " + index);
 			}
 			var locale = loc_me.get_locale_by_index(this.values
 								    .language);
-			if (locale === undefined) {
-				// So someone uninstalled an added locale ?
-				// the original code will not recover from
-				// that, so fix it ourself.
-				this.values.language = "0";
-				locale = "en_US";
-			}
 
 			// Now resume normal processing, which is to actually
 			// set the variable.
@@ -656,8 +650,31 @@ class FontPatcher {
 				    + " in localStorage");
 
 		};
+		var patch_loaded_globals = function(globals) {
+			var id = loc_me.get_index_for_locale(ig.currentLang);
+			// ig.currentLang is probably set from localStorage.
+			// if it is an added locale, then ignore the 'english'
+			// that we leave in the options.
+			if (id != null)
+				globals.options["language"] = id;
+			this.parent(globals);
+		};
+		var patch_saved_globals = function(globals) {
+			this.parent(globals);
+			var langid = globals.options["language"];
+			// do not store the id of an added locale into the
+			// options, because the game can not recover from
+			// a missing id.  That, and ids of added locales may
+			// change anyway.
+			if (loc_me.get_locale_by_index(langid))
+				// Store english in the options.
+				globals.options["language"] = 0;
+		};
+
 		sc.OptionModel.inject({
-			_checkSystemSettings : patched_check_settings
+			_checkSystemSettings : patched_check_settings,
+			onStorageGlobalLoad: patch_loaded_globals,
+			onStorageGlobalSave: patch_saved_globals
 		});
 	});
 
