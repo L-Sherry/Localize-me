@@ -69,6 +69,18 @@ class LocalizeMe {
 	 *		  get_char_pos(c) -> { x, y, width, height } to get
 	 *		  the position of a char in loaded_image and
 	 *		  set_char_pos(c, { x, y, width, height }) to change it.
+	 *		  This function can not block, use pre_patch_font to
+	 *		  perform blocking operations (like, loading images)
+	 *
+	 * - "pre_patch_font" an optional function that is called before the
+	 *		      first call to patch_font.  Unlike patch_font,
+	 *		      this one may return a promise and will be called
+	 *		      once per font.  Takes a context containing
+	 *		      "char_height" (height of font),
+	 *		      "size_index" (as used by the game) and
+	 *		      "base_image" (the base image of a multifont).
+	 *		      This context is carried out to patch_font, so you
+	 *		      may store stuff in there.
 	 *
 	 * This function should be called in postload. This object is created
 	 * during preload, so it will be availlable.
@@ -563,43 +575,98 @@ class LocalizeMe {
 		this.language_known_resolve(locale);
 	}
 
-	// Caller should arrange for the current locale to be known first.
-	apply_font_patch(canvas_source, context) {
-		var localedef = this.added_locales[this.current_locale];
-		if (!localedef || !localedef.patch_font)
-			return canvas_source;
-		var ret = localedef.patch_font(canvas_source, context);
-		if (!ret) {
-			console.warn("patch_font() returned nothing");
-			ret = canvas_source;
-		}
-		return ret;
+
+	// Return the current locale definition for the current locale.
+	// If the actual is a native locale, then return null.
+	// Caller should arrange for the final locale to be known first,
+	// by e.g. awaiting wait_for_language_known().
+	get_current_localedef() {
+		return this.added_locales[this.current_locale];
 	}
 }
 window.localizeMe = new LocalizeMe();
 
+/*
+ * Patches a multifont.
+ *
+ * This class is typically instanciated once per multifont to patch.
+ */
 class FontPatcher {
 	constructor() {
-		this.base_image_loaded = new Promise((resolve) => {
-			this.resolve = resolve;
+		this.metrics_loaded_promise = new Promise((resolve) => {
+			this.resolve_metrics_loaded = resolve;
 		});
 		this.context = null;
 	}
 
-	metrics_loaded(get_char_pos, set_char_pos) {
-		this.context = { get_char_pos, set_char_pos };
-		this.resolve(this);
-	}
-	patch_image_sync(image) {
-		return window.localizeMe.apply_font_patch(image,
-							  this.context);
+	/*
+	 * Call the pre_patch_hook then wait for it to complete.
+	 */
+	async prepare_patch(multifont) {
+		await window.localizeMe.wait_for_language_known();
+		this.context = { char_height: multifont.charHeight,
+				 size_index: multifont.sizeIndex,
+				 base_image: multifont.data
+			       };
+		var localedef = window.localizeMe.get_current_localedef();
+		if (localedef && localedef.pre_patch_font)
+			await localedef.pre_patch_font(this.context);
 	}
 
-	// Resolves an patched canvas/image whatever.
+	/*
+	 * Fetch metrics then unblock all calls waiting for metrics to be
+	 * available.
+	 */
+	metrics_loaded(multifont) {
+		this.context.get_char_pos = ((c) => {
+			var index = c.charCodeAt(0);
+			index -= multifont.firstChar;
+			// don't ask about the +1.
+			var width = multifont.widthMap[index] + 1;
+			var height = multifont.charHeight;
+			var x = multifont.indicesX[index];
+			var y = multifont.indicesY[index];
+			return { x, y, width, height };
+		}).bind(multifont);
+		this.context.set_char_pos = ((c, rect) => {
+			var index = c.charCodeAt(0);
+			index -= multifont.firstChar;
+			multifont.indicesX[index] = rect.x;
+			multifont.indicesY[index] = rect.y;
+			multifont.widthMap[index] = rect.width - 1;
+			if (rect.height != multifont.charHeight)
+				console.warn("bad height for",
+					     c);
+		}).bind(multifont);
+
+		this.resolve_metrics_loaded();
+	}
+
+	/*
+	 * Wait for the metrics to be available, then patch the given image.
+	 *
+	 * Resolves to a patched canvas/image whatever.
+	 */
 	async patch_image_async(image) {
-		await this.base_image_loaded;
+		await this.metrics_loaded_promise;
 		return this.patch_image_sync(image);
 	}
+
+	/*
+	 * Patch the image synchronously.
+	 */
+	patch_image_sync(image) {
+		var localedef = window.localizeMe.get_current_localedef();
+		if (!localedef || !localedef.patch_font)
+			return image;
+		var ret = localedef.patch_font(image, this.context);
+		if (!ret) {
+			console.warn("patch_font() returned nothing");
+			ret = image;
+		}
+		return ret;
+	}
+
 }
 
 {
@@ -696,61 +763,42 @@ class FontPatcher {
 		"impact.base.font"
 	).defines(function() {
 		// We want to do two things here:
-		// - patch the flags
+		// - patch the flags (later ...)
 		// ig.Font.inject({...})
 		// - patch the font to match the encoding of the locale.
 		ig.MultiFont.inject({
 			'init': function(...varargs) {
 				this.parent.apply(this, varargs);
-				this.LOCALIZEME = new FontPatcher();
+				this.FONTPATCHER = new FontPatcher();
 			},
 			'pushColorSet': function(key, img, color) {
 				this.parent(key, img, color);
 
-				var old_onload = img.onload;
-				var context = this.LOCALIZEME;
+				var old_onload = img.onload.bind(img);
+				var fontpatcher = this.FONTPATCHER;
 				// let's patch those images only. let the other
 				// mods patch up everything else :)
-				img.onload = function(a) {
-					context.patch_image_async(this.data
+				img.onload = function() {
+					fontpatcher.patch_image_async(this.data
 					).then((result) => {
 						this.data = result;
-					}).then(old_onload.bind(this, a));
+					}).then(old_onload.bind(this));
 				};
 			},
 			'onload': function(img) {
+				// This is called only for the base font.
+				// NOTE: img seems to be ignored by the parent.
+				//
 				// then() will call _loadMetrics
 				var then = this.parent.bind(this, img);
-				loc_me.wait_for_language_known().then(then);
+				this.FONTPATCHER.prepare_patch(this).then(then);
 			},
 			'_loadMetrics': function(img) {
 				this.parent(img);
-				var get_char = ((c) => {
-					var index = c.charCodeAt(0);
-					index -= this.firstChar;
-					// don't ask about the +1.
-					var width = this.widthMap[index] + 1;
-					var height = this.charHeight;
-					var x = this.indicesX[index];
-					var y = this.indicesY[index];
-					return { x, y, width, height };
-				}).bind(this);
-				var set_char = ((c, rect) => {
-					var index = c.charCodeAt(0);
-					index -= this.firstChar;
-					this.indicesX[index] = rect.x;
-					this.indicesY[index] = rect.y;
-					this.widthMap[index] = rect.width - 1;
-					if (rect.height != this.charHeight)
-						console.warn("bad height for",
-							     c);
-				}).bind(this);
-				this.LOCALIZEME.metrics_loaded(get_char,
-							       set_char);
-				if (img !== this.data)
-					console.warn("localizeme font failed");
+				this.FONTPATCHER.metrics_loaded(this);
 
-				this.data = this.LOCALIZEME.patch_image_sync(
+				// Start by patching the base font right away.
+				this.data = this.FONTPATCHER.patch_image_sync(
 					img
 				);
 			}
@@ -758,8 +806,6 @@ class FontPatcher {
 	})
 
 
-	// While simplify already provide some stuff to patch requests,
-	// it's said that simplify is deprecated ... whatever.
 	$.ajaxPrefilter("json", function(options) {
 		var old_url = options.url;
 
@@ -822,21 +868,28 @@ class FontPatcher {
 				mac:"garbagegarbagegarbageg=="
 			}
 		};
-		window.localizeMe.add_locale("en_LEA",
-			{from_locale: "en_US",
-			 map_file: () => (path) => (dict_path) => sample,
-			 missing_cb: leaize,
-			 language: {
+		window.localizeMe.add_locale("en_LEA", {
+			from_locale: "en_US",
+			map_file: () => (path) => (dict_path) => sample,
+			missing_cb: leaize,
+			language: {
 				en_LEA: "Hi Lea!",
 				en_US: "Lea's English"
-			 },
-			 text_filter: text => text.replace("z", "i"),
-			 patch_font: (source, context) => {
-				var aa = context.get_char_pos('\u00e9');
-				context.set_char_pos('e', aa);
+			},
+			text_filter: text => text.replace("z", "i"),
+			patch_font: (source, context) => {
+				if (!context.done) {
+					var ee = context.get_char_pos('\u00e9');
+					context.set_char_pos('e', ee);
+					context.done = true;
+				}
 				return source;
-			 }
-			});
+			},
+			pre_patch_font: () => (
+				new Promise((resolve) => setTimeout(resolve,
+								    5000))
+			)
+		});
 	}
 }
 
