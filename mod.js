@@ -82,8 +82,33 @@ class LocalizeMe {
 	 *		      This context is carried out to patch_font, so you
 	 *		      may store stuff in there.
 	 *
-	 * This function should be called in postload. This object is created
-	 * during preload, so it will be availlable.
+	 * - "number_locale" If set, then number patching is enabled, and this
+	 *		     locale string will be used as the first parameter
+	 *		     of Number.prototype.toLocaleString.  This should
+	 *		     cover most number formatting needs.  Note that it
+	 *		     formats the '%' unit with the 'percent' style of
+	 *		     toLocaleString() but only suffix the other units.
+	 *
+	 * - "format_number" If set, then number patching is enabled and this
+	 *		     function will be called with 4 parameters, and
+	 *		     should return a formatted number as a string.
+	 *		     (number, precision, suffix, template)
+	 *		     'number' is the Number to format
+	 *		     'precision' indicates how much fractional digits
+	 *		                 must be displayed (as in toFixed())
+	 *		     'units' is either empty, or contains an unit.
+	 *		             currently, only '%', 'm' and 'km' are used.
+	 *		             it should be suffixed or to the number
+	 *		     'template' is passed only if 'number_locale' is
+	 *		                defined: this is the number formatted
+	 *		                by toLocaleString as if only
+	 *		                'number_locale' was defined.  It is
+	 *		                this possible to reuse this formatted
+	 *		                number instead of recoding everything
+	 *		                from scratch.
+	 *
+	 * This function should be called in postload. This object will be
+	 * available if you depend on this mod.
 	 */
 	add_locale(name, options) {
 		if (name in this.added_locales) {
