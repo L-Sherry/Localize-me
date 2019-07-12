@@ -669,6 +669,193 @@ class FontPatcher {
 
 }
 
+class NumberFormatter {
+	constructor(loc_manager) {
+		// this may stay null if we don't need to patch anything.
+		this.localedef = null;
+
+		loc_manager.wait_for_language_known().then(() => {
+			var localedef = loc_manager.get_current_localedef();
+			if (!localedef)
+				return; // native locale, don't do anything.
+			if (localedef.format_number
+			    || localedef.number_locale) {
+				// we sometimes need to unparse numbers, so
+				// we need to expect them in en_US locale.
+				// (i don't know how the de_DE locale works
+				//  with fractional numbers).
+				delete localedef.commaDigits;
+				this.localedef = localedef;
+			}
+		});
+	}
+	// Assume that localedef.number_locale exists and format with it.
+	format_number_default(number, frac_precision, unit) {
+		var locale = this.localedef.number_locale;
+		var options = {
+			minimumFractionDigits: frac_precision,
+			maximumFractionDigits: frac_precision
+		};
+
+		var suffix = '';
+		if (unit === '%') {
+			number /= 100;
+			options.style = "percent";
+		} else if (unit)
+			suffix = unit;
+
+		return number.toLocaleString(locale, options) + suffix;
+	}
+	// this function will crash if we shouldn't patch stuff.
+	//
+	// so don't call it when you don't need to.
+	format_number(number, frac_precision, unit) {
+		frac_precision = frac_precision || 0;
+		unit = unit || null;
+		number = Number(number);
+		var ret = null;
+		if (this.localedef.number_locale)
+			ret = this.format_number_default(number,
+							 frac_precision,
+							 unit);
+
+		if (this.localedef.format_number)
+			ret = this.localedef.format_number(number,
+							   frac_precision,
+							   unit,
+							   ret);
+		return ret;
+	}
+
+	// Parse a number that had gone through the game formatter, based on
+	// that regex o̶f̶ ̶d̶o̶o̶m̶ of stack overflow.
+	unformat_en_us_number(number_str) {
+		return Number(number_str.replace(/,/g, '', number_str));
+	}
+
+	hook_var_access() {
+		var formatter = this;
+		var find_number = splitted => {
+			if (splitted[0] !== "misc")
+				return null;
+			if (splitted[1] === "localNum")
+				return splitted[2];
+			if (splitted[1] === "localNumTempVar")
+				return ig.vars.get("tmp." + splitted[2]);
+			return null;
+		};
+		var patched_on_var_access = function(varname, splitted) {
+			if (formatter.localedef) {
+				var number = find_number(splitted);
+				if (number !== null)
+					return formatter.format_number(number);
+			}
+			return this.parent(varname, splitted);
+		};
+		ig.module("localizeme_menu_model_numerics")
+		  .requires("game.feature.menu.menu-model").defines(() => {
+			sc.MenuModel.inject({
+				onVarAccess: patched_on_var_access
+			});
+		});
+	}
+	hook_meters_statistics () {
+		var format_meters = () => {
+			if (this.localedef === null)
+				return null; // native number formatting
+			var steps = sc.stats.getMap("player", "steps") || 0;
+			// 1.632 m per step ? that's a pretty big step.
+			var meters = steps * 1.632;
+			if (meters < 1000)
+				return this.format_number(meters, 0, "m");
+			return this.format_number(meters / 1000, 2, "km");
+		};
+
+		ig.module("localizeme_reimplement_steps")
+		  .requires("game.feature.menu.gui.stats.stats-gui-builds")
+		  .defines(() => {
+			var general = sc.STATS_BUILD[sc.STATS_CATEGORY.GENERAL];
+			// This one uses suffix to add fractional parts, sigh.
+			general.meters.localize_me_format = format_meters;
+		});
+
+	}
+	hook_statistics() {
+		// remaining:
+		// sc.StatPercentNumber
+		// sc.NumberGui (big one)
+		var formatter = this;
+
+		var patched_keyvalue_init = function(a, data, c) {
+			this.parent(a, data, c);
+			if (formatter.localedef === null)
+				return;
+
+			if (data.asNumber) // that uses sc.NumberGui.
+				return;
+
+			if (data.localize_me_format) {
+				var v = data.localize_me_format();
+				if (v)
+					this.valueGui.setText(v);
+				return;
+			}
+
+			if (data.postfix)
+				// We can't handle that. Fortunately, only one
+				// statistics uses this, and its formatting is
+				// completely broken anyway, so we're redoing
+				// it with localize_me_format above.
+				return;
+
+			var number = this.valueGui.text;
+			number = formatter.unformat_en_us_number(number);
+			number = formatter.format_number(number);
+			this.valueGui.setText(number);
+		};
+		var patched_keyvalue_set = function(num, data, suffix) {
+			if (formatter.localedef === null)
+				return this.parent(a, data, c);
+			var text = data ? formatter.format_number(num) : num;
+			this.valueGui.setText(text + suffix ? suffix : '');
+		};
+
+		var patched_keyvaluepercent_init = function(a, data, c) {
+			this.parent(a, data, c);
+			if (formatter.localedef === null)
+				return;
+			var text = this.numberGui.text;
+			var index = text.indexOf('\\');
+			var number = text.slice(0, index);
+			number = formatter.unformat_en_us_number(number);
+			number = formatter.format_number(number);
+			this.numberGui.setText(number + text.slice(index));
+		};
+
+		ig.module("localizeme_stat_type_numerics")
+		  .requires("game.feature.menu.gui.stats.stats-types")
+		  .defines(() => {
+			sc.STATS_ENTRY_TYPE.KeyValue.inject({
+				init: patched_keyvalue_init,
+				setValue: patched_keyvalue_set
+			});
+			sc.STATS_ENTRY_TYPE.KeyValuePercent.inject({
+				init: patched_keyvaluepercent_init
+			});
+			// sc.STATS_ENTRY_TYPE.KeyCurMax also uses the dreaded
+			// formatter, but it only formats integers between
+			// 0 and something like 125, so is that really needed ?
+		});
+
+	}
+
+	hook_into_game() {
+		this.hook_var_access();
+		this.hook_statistics();
+		this.hook_meters_statistics();
+	}
+}
+
 {
 	var loc_me = window.localizeMe;
 
@@ -805,6 +992,8 @@ class FontPatcher {
 		});
 	})
 
+	var number_formatter = new NumberFormatter(loc_me);
+	number_formatter.hook_into_game();
 
 	$.ajaxPrefilter("json", function(options) {
 		var old_url = options.url;
