@@ -336,6 +336,47 @@ class LocalizeMe {
 	}
 
 	/**
+	 * Decrapt the given string using the given original text.
+	 *
+	 * Return null if the decryption failed.
+	 * May throw exceptions if CryptJS is buggy.
+	 */
+	decrapt_string(trans_result, orig) {
+		// the loaded CryptoJS only supports AES CBC with Pkcs7 and
+		// MD5... This should be more than enough for the "security"
+		// that we need: requiring the game files to get the
+		// translation.
+		var ciphertext
+			= CryptoJS.enc.Base64.parse(trans_result.ciphertext);
+		var key = CryptoJS.MD5(orig);
+		var param = CryptoJS.lib.CipherParams.create({ ciphertext,
+							       iv:key})
+		var text = CryptoJS.AES.decrypt(param, key,
+						{ mode: CryptoJS.mode.CBC,
+						  padding: CryptoJS.pad.Pkcs7,
+						  iv: key}
+		);
+		// This happens if the padding is incorrect, and the last byte
+		// of the decryption is longer than the actual input...
+		if (text.sigBytes < 0)
+			return null;
+		if (trans_result.mac) {
+			// if i don't do this, then calculating the md5 of it
+			// fails.
+			text.clamp();
+			// wait, CryptoJS.HmacMD5 does not work ? Crap.
+			// var correct_mac = CryptoJS.HmacMD5(text, key);
+			var correct_mac = this.hmacmd5(text, key);
+
+			var mac = CryptoJS.enc.Base64.stringify(correct_mac);
+			if (trans_result.mac !== mac)
+				// stale translation
+				return null;
+		}
+		return CryptoJS.enc.Utf8.stringify(text);
+	}
+
+	/**
 	 * Given a translation result, get the translation of the given
 	 * string or lang label.
 	 *
@@ -356,36 +397,15 @@ class LocalizeMe {
 			return null;
 		if (trans_result.text)
 			return trans_result.text;
-		// the loaded CryptoJS only supports AES CBC with Pkcs7 and
-		// MD5... This should be more than enough for the "security"
-		// that we need: requiring the game files to get the
-		// translation.
 		if (!trans_result.ciphertext)
 			return null;
-		var ciphertext
-			= CryptoJS.enc.Base64.parse(trans_result.ciphertext);
-		var key = CryptoJS.MD5(orig);
-		var param = CryptoJS.lib.CipherParams.create({ ciphertext,
-							       iv:key})
-		var text = CryptoJS.AES.decrypt(param, key,
-						{ mode: CryptoJS.mode.CBC,
-						  padding: CryptoJS.pad.Pkcs7,
-						  iv: key}
-		);
-		if (trans_result.mac) {
-			// if i don't do this, then calculating the md5 of it
-			// fails.
-			text.clamp();
-			// wait, CryptoJS.HmacMD5 does not work ? Crap.
-			// var correct_mac = CryptoJS.HmacMD5(text, key);
-			var correct_mac = this.hmacmd5(text, key);
-
-			var mac = CryptoJS.enc.Base64.stringify(correct_mac);
-			if (trans_result.mac !== mac)
-				// stale translation
-				return null;
+		try {
+			return this.decrapt_string(trans_result, orig);
+		} catch (e) {
+			console.error(e);
+			console.error("decryption failed hard, is translation stale ?");
+			return null;
 		}
-		return CryptoJS.enc.Utf8.stringify(text);
 	}
 
 	/**
