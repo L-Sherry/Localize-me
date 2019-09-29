@@ -20,6 +20,7 @@ This mod currently handles the following:
 - Optionally patching the PNG fonts to add more characters or improve them.
 - Preliminary support for changing the way the game format numbers.
 
+For details on how to create a translation mod, see the Documentation.md file.
 
 To create, modify or update translations, check out Localize-Me-Tools
 at https://github.com/L-Sherry/Localize-Me-Tools
