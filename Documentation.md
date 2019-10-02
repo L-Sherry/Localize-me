@@ -21,11 +21,11 @@ language code and `COUNTRY` is a ISO 3166-1 country name.
 
 For example, the game currently defines these locales:
 
-- `en_US` (english as spoken in the US)
-- `de_DE` (german as spoken in germany)
-- `zh_CN` (mainland chinese with simplified characters)
-- `ja_JP` (japan's japanese)
-- `ko_KR` (korean as spoken in korea)
+- `en_US` (English as spoken in the US)
+- `de_DE` (German as spoken in Germany)
+- `zh_CN` (mainland Chinese with simplified characters)
+- `ja_JP` (japan's Japanese)
+- `ko_KR` (Korean as spoken in Korea)
 
 To find the correct one for your language, either browse the ISO standards
 on the net, or, if you are on some unix, well, your OS already knows the
@@ -55,13 +55,13 @@ known to currently use the following optional fields of `locale_options`:
   separation.
 - `newlineException` (Array): As an exception to `newlineAnywhere`, do not
   break lines after these characters.
-  The game uses indexOf to determine if a character is part of the set, so
+  The game uses `indexOf` to determine if a character is part of the set, so
   using a String should also work.
 - `newlineAfter` (Array): Unconditionally insert a line break after this
   character.  Like `newlineException`, a string should also work.
 
 - `commaDigits` (Boolean): If false, the default is to format large numbers
-  like english, with ',' as a thousand separator. If true, then '.' is
+  like English, with ',' as a thousand separator. If true, then '.' is
   used instead.  Note that Localize-Me options will override this behavior
   in some cases, but not all. See *Number formatting* for details.
 
@@ -73,21 +73,22 @@ In top of this, Localize-Me adds the following options and callbacks.
   A value of e.g. `{'en_US': 'German', 'de_DE': 'Deutsch', 'fr_FR': 'Allemand'}`
   means that if the game is currently in English (`en_US` locale), then 'German'
   will be used, but if the game uses the `de_DE` locale, then 'Deutsch' will be
-  displayed.
+  displayed, likewise, `Allemand` is displayed if the `fr_FR` locale is used.
 
   If the language of the game is not in this object, then the default is to
   display the name of the language in the language itself.  So if you are e.g.
-  defining the `nl_NL` locale, then `language` should at a minimum contain
+  defining the `nl_NL` locale, then `language` must at a minimum contain
   the `nl_NL` field.
 
 - `map_file` (Mandatory!) (String or AsyncFunction): Specifies a map file URL
   or function.  See the *Map File* section for details.
 - `url_prefix` (String): Prefix every URL found in the map file by this.  Using
-  something based on `document.currentScript.src` is advisable. See the
-  *Map file* for details.
+  something based on `document.currentScript.src` is advisable.  Note that
+  the map file URL is not prefixed with this value.
+  See the *Map file* for details.
 - `from_locale` (String): The language where you translated the text from.
   This is used in various places and is strongly recommended, if not mandatory
-  in some cases.
+  in most cases.
   See *Translations* for details.
 
 - `missing_cb` (Function): Localize-Me calls this callback when it finds a text
@@ -206,11 +207,13 @@ So a `file_dict_path_str` consist of the concatenation of a `file_path`, a
 
 Some actual example could are:
 
-`maps/cargo-ship/ship.json/entities/125/settings/event/35/message`
-`maps/arid/interior/the-room.json/entities/40/settings/event/136/message`
-`lang/sc/gui.en_US.json/labels/title-screen/start`
-`lang/sc/gui.en_US.json/labels/menu/help-texts/lore/pages/1/content/2`
-`lang/sc/gui.en_US.json/labels/menu/help-texts/equip/pages/0/content/0`
+```
+maps/cargo-ship/ship.json/entities/125/settings/event/35/message
+maps/arid/interior/the-room.json/entities/40/settings/event/136/message
+lang/sc/gui.en_US.json/labels/title-screen/start
+lang/sc/gui.en_US.json/labels/menu/help-texts/lore/pages/1/content/2
+lang/sc/gui.en_US.json/labels/menu/help-texts/equip/pages/0/content/0
+```
 
 It should be noted that, currently, every file in `assets/data` ends with the
 `.json` file extension, so these references are currently not ambiguous.
@@ -241,7 +244,7 @@ If `orig` is specified, Localize-Me will check that the original text is equal
 to `orig` before using `text`.  If it differs, then Localize-Me will consider
 the translation as missing.  We call this case a "stale translation".
 
-Localize-Me-Tools can be used to detect stale translations.
+Localize-Me-Tools can be used to detect stale translations and update them.
 
 An example of a result can be thus simply
 
@@ -447,7 +450,8 @@ only pack files are.
 
 It is possible to point Localize-Me to a translated lang file instead of a pack
 file.  However, this is deprecated and support for this may be removed in the
-future.  Things are already complicated enough.
+future.  Things are complicated enough already, and lang files cannot provide
+stale translation checking.
 
 If the map file is a function and it returns a function, then it is called
 as follows:
@@ -484,9 +488,10 @@ An example of what `mapfile.json` could contain is:
 ```
 
 Using this will make your mod depends on the name of the directory where
-it is installed.  One way to fix this is to use `document.currentScript.src`:
+it is installed.  One way to fix this is to use `document.currentScript.src`.
 
 ```
+# this assumes that your script is called "postload.js"
 const my_directory = document.currentScript.src.slice(0, -"postload.js".length);
 
 [...]
@@ -528,25 +533,99 @@ map_file: () => () => null,
 missing_cb: (stuff) => (stuff.en_US || stuff).replace("Lea", "Manlea")
 ```
 
-but be careful to not replace var references, or the game could crash.
+but be careful to not replace var references (e.g. `\v[tmp.killedKitten]`,
+`\v[lore.title.track-of-ancient]`, or the game could litteraly throw an
+exception.
 
 ## Fonts
+
+The game can use two kind of fonts. Either system fonts loaded via CSS, or
+manually crafted PNG fonts that only cover parts of the ISO 8859-15
+character set. Currently, the PNG fonts are used for English and German,
+while the game loads system fonts for the cjk languages.
 
 ### PNG fonts
 
 There are those pngs fonts in assets/media/font/.  There are three variants
 in use:
 
-- `tiny`, 7px, in `tiny.png`
+- `tiny`, 7px, in `tiny.png`, used for very small texts.
 - `small`, 13px, in `hall-fetica-small.png`, used in e.g. xeno texts
 - and `bold`, 16, in `hall-fetica-bold.png`, which is the regular one used
   everywhere, from menus to conversations.
 
 Note that separate PNG files are used for each possible color that the game
-uses. Therefore, modifing these files will not be enough.  This is why
-Localize-Me provides some PNG font patching support.
+uses.  The colors are:
+- for `tiny`: white, grey, red, green and yellow (the game calls that `orange`
+  or even `purple`)
+- for `small`: white, grey, red, green, yellow (the game still calls that
+  `purple`) and orange.
+- for `bold`: white, red, green, yellow (the game still calls that `purple`)
+  and gray.
 
-TODO
+(Note that the `\c[3]` `\c[1]` `[c[0]` that you see in the game's text refers
+ to these colors.  `\c[3]` means to pick the fourth color (the first color is
+ 0, white), so if the font is `bold`, this will pick the yellow color).
+
+Therefore, to patch a font, all colors must be modified in the same way.
+It is easily more practical to script this that to manually modify several
+images.  Especially since the game forces every different color to have the
+same character exactly at the same position.
+
+This is why Localize-Me provides some PNG font patching support, through the
+`pre_patch_font` and `patch_font` callbacks.
+
+For each font size, the following happens:
+- Localize-Me intercepts the game's request to load the font and wait for the
+  PNG file to be loaded. Note that at this stage, the game has already started
+  to load every font in every color available, and Localize-Me already hooked
+  all of them.
+- Localize-Me waits for the white font to be loaded. It then creates a `context`
+  object for the font, with the following fields:
+  * `char_height`, the height of the char of a font, which is 7, 13 or 16.
+  * `base_image`, the loaded base image that uses the default color (white).
+    note that modifying this object will not affect the game.
+
+- If `pre_patch_font` is specified, then Localize-Me calls it with the context
+  as a parameter: `pre_patch_font(context)`.
+  The callback is free to modify this object, add fields or more, as this
+  object will be reused in the following callbacks.  It is also possible to
+  wait in this asynchronous function.
+- Localize-Me then hands the white font image to the game, so that it can
+  extract font data from the PNG image, such as the position of each character
+  and their width.  To do that, the game uses the lines that you can see below
+  each character. The game loads character from left to right, top to bottom,
+  starting at character number 32 (a space) and continuing up to character 255.
+  The game only checks for the transparency value of the line below it to know
+  the width of one character.
+- Localize-Me then intercepts the next call right after the game parsed the
+  font metrics. It then augments the context with these fields:
+  * `get_char_pos`: a function that, given a character (as a string), returns
+    an object with fields `x`, `y`, `width` and `height`, indicating where the
+    character is in the image.
+  * `set_char_pos`: a function that, given a character (as a string) and an
+    object with fields `x`, `y`, `width` and `height`, changes the game so it
+    fetches the character at the specified position instead.  Note that it is
+    not possible to change the height of a single character.  Note that all
+    colors share the same metrics, so it only needs to be called once for each
+    font size.
+- If `patch_font` is specified, then it is called multiple times for each
+  color, as follows: `patch_font(image_or_canvas, context)`.
+
+  The game uses Image or HTMLCanvas objects interchangeably, so you should be
+  prepared to handle both.  The actual image content is either the white font or
+  one of the various color for that font.
+
+  This function should return an image or a canvas (the game can handle both
+  types). The caller is advised to patch
+each image in the same way, possibly by calculating what needs to be done once,
+storing it in the `context` object, then blindly applying these change to each
+passed `image`.  Note that due to the way the game works, `patch_font` cannot
+wait.
+- Each time `patch_font` returns, Localize-Me hands out the image to the game.
+
+Note that font patching happens very early in the game bootstrapping process.
+Therefore, most of the game modules will probably be unavailable.
 
 ### System fonts
 
@@ -556,4 +635,44 @@ Modifying document.style should be doable with a few lines of code.
 
 ## Number formatting
 
-TODO
+Localize-Me provides some methods to format numbers according to the current
+locale. But note that it does not apply to every numbers used by the game.
+For example, Localize-Me does not modify the formatting of damage numbers,
+because the game currently makes this impractical to patch.
+
+Still, Localize-Me supports formatting numbers specified by variable
+substitions (e.g. `\v[misc.localNum.424242]`) or the numbers from the statistics
+menu.  It is configurable through the `number_locale` option and
+`format_number` callback.
+Specifying any of these two will enable number formatting localization.
+
+If `number_locale` is specified, then Localize-Me will format numbers using
+a default implementation that relies on `Number.prototype.toLocaleString`.
+This method is provided by the browser (in nwjs case, it's Chromium) and
+is specified in the ES Internationalization API as an extention to ES5.
+The first parameter of `toLocaleString` specifies the locale to be used,
+and Localize-Me's implementation will shamelessly uses the value of
+`number_locale` for it. Beware that `toLocaleString` uses a locale format
+that differs from the game, since they are based on html language tags.
+
+Beware that different browser may return different results. For example,
+browsers may return different Unicode strings that are rendered the same way,
+or in a very similar way.  It is also your responsibility to ensure that the
+resulting string can be rendered by the game. For example, the `fr-FR` locale
+is known to return various kind of non-breaking spaces depending on the
+browser, and the game is, by default, not able to handle those.
+
+To provide for greater control, Localize-me proposes the `format_number`
+callback, which is called as follows:
+`format_number(number, fractional_precision, unit, reference)` and must return
+a string.
+
+While number is the number that must be formatted, `fractional_precision`
+indicates how many digits must be present after the "comma", and
+`unit` is the unit that must be appended to the number, if any.
+Currently, this may be null, '%', 'm' or 'km'.
+
+`reference` is given only if `number_locale` is specified.  In this case,
+Localize-Me will render the number with its default implementation then
+pass the result in this parameter. Thus, it is possible to apply small
+modifications to this value and return it.
