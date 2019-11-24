@@ -906,10 +906,14 @@ class FontPatcher {
 		const localedef = await this.localedef_promise;
 		this.context = { char_height: multifont.charHeight,
 				 size_index: multifont.sizeIndex,
-				 base_image: multifont.data
+				 base_image: multifont.data,
+				 set_base_image: new_image => {
+					 multifont.data = new_image;
+				 }
 			       };
 		if (localedef && localedef.pre_patch_font)
 			await localedef.pre_patch_font(this.context);
+		delete this.context.set_base_image;
 	}
 
 	/*
