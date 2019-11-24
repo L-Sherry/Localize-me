@@ -1,32 +1,800 @@
-(() => {
-	"use strict";
+"use strict";
 
-/// Function returned by various methods when things are not found.
-/// This allows callers to either use it blindly or check if it not_found
-var not_found = () => null;
-
-// This thing is turning into a god class...
-class LocalizeMe {
+/**
+ * This whole mess deserves an explanation.  When the game loads, the following
+ * normally happens:
+ *
+ * - Before the game's main() has a chance to run, we patch the ig.LANG_DETAILS
+ *   (which contains the locale information) and sc.LANGUAGE, which
+ *   contain a mapping from indexes to locales. These indexes are used in the
+ *   settings dialogs. These are typically not available when the game's code
+ *   is loaded, but only later during initialisation of main's dependencies.
+ *
+ * - main() runs, and tries to determine the final language to be used by the
+ *   game. For that, it looks at localStorage and if not, it auto-detects it
+ *   with LANG_DETAILS's useFor.  if localStorage contains an unknown locale,
+ *   this part of the code can recover from it by switch back to english
+ *   and saving that in localStorage.  It should be noted that localStorage
+ *   represent a locale as text (e.g. en_US).
+ *   
+ * - Once the "final" language is determined, it is stored in ig.currentLang.
+ *   This is the language that will be used for the remaining of the game, and
+ *   changing it requires a restart.  We patch an unrelated part of the code
+ *   just to have an event trigger when this happens, because other things in
+ *   this mod absolutely want to know which language we should actually patch
+ *   in.
+ *
+ * - The game continues to load, and starts to initialize its options in
+ *   sc.OptionModel's constructor.  This is where the mess begins.
+ *   These is a game option named "language" that duplicate what's in
+ *   localStorage, except it's an integer and not a string, because that's
+ *   easier to handle in OptionModel.  The game has a mapping from this
+ *   integer to a string, in a local variable that we can't access.
+ *   Duplicating it would be too fragile.  The constructor first initializes
+ *   "language" to it's default value, which is normally 0, but i think previous
+ *   versions of the game could leave it unset.
+ *
+ * - Then, it uses the internal mapping to convert the final language into
+ *   an integer.  This code has the property that if the final language is
+ *   unknown to the mapping, then "language" is left unmodified.  So if this a
+ *   locale added by us, "language" may be 0 or it may be undefined, in which
+ *   case we better patch this quickly, before the game crashes.
+ *
+ * - Right after that, it calls code (let's call it setOption, which is much
+ *   clearer than its actual name _checkSystemSettings), that... translate the
+ *   "language" integer into a locale name using the internal mapping, before
+ *   storing it in localStorage.  This setOption() thing is tricky, because it
+ *   is used in loads of places other than the constructor.  But say that we
+ *   cannot detect this case reliably, so we allow "language" values that do
+ *   not match the final language at this point.
+ *
+ * - The game continue to load, and loads the file containing both savefiles
+ *   and game options (or select default options).  After that, it calls
+ *   onStorageGlobalLoad(), which the options that were loaded.
+ *   it will update the options from what was loaded and then it will call...
+ *   setOption() on them. Yep.  We patch onStorageGlobalLoad to patch the
+ *   "language" mess there, because it is only called during initialization.
+ *
+ * - If the user goes into the options and select a language, then setOption()
+ *   is also called in this case.  The user basically clicked on an integer,
+ *   and this function is responsible for storing it into localStorage as well
+ *   as the options.
+ *
+ * - When the game wants to save options, it calls onStorageGlobalSave, which
+ *   we also patch.  We do not want to save our added locales's integer into
+ *   the save file, because the game cannot recover from that if localize-me
+ *   gets uninstalled.  So we always save 0 and we make it that
+ *   onStorageGlobalLoad ignores the saved option if the final locale is a
+ *   custom one.
+ */
+class GameLocaleConfiguration {
 	constructor() {
+		// locale definitions here.  the native ones are not present.
 		this.added_locales = {};
-		// If the index is a native, then it is mapped to null.
-		this.locales_by_index = {};
+		// native locales are mapped to null, because we don't know
+		// their indexes.  It can also be used to distinguish between
+		// added locales and completely unknown indexes.
+		this.localedef_by_index = {};
+		// Total number of locales in the game, including the native
+		// ones.
 		this.locale_count = 0;
-
-		this.current_locale = null;
-		this.from_locale = null;
-
-		this.map_file = null;
-		this.url_cache = {};
-
-		// no defer ?
-		this.language_known = new Promise((resolve) => {
-			this.language_known_resolve = resolve;
-		});
-		this.language_known.then((locale) => {
-			console.log("final locale:", locale);
+		// Until the game determines the language to use for this run,
+		// this is a promise.  After which, it is the language used
+		// by the game.
+		this.final_locale = new Promise((resolve) => {
+			this.set_final_locale = (locale) => {
+				console.log("final language set to ", locale);
+				this.final_locale = locale;
+				resolve(locale);
+			};
 		});
 	}
+
+	// Add a custom locale definition.  Can be called any time before the
+	// patch_game_locale_definitions() is called, which happen after the
+	// game starts but before main().
+	add_locale_definition(name, localedef) {
+		if (name in this.added_locales) {
+			console.error("Language " + name + " added twice");
+			return;
+		}
+		if (this.locale_count) {
+			console.error("Language " + name
+				      + " is added too late !");
+			return;
+		}
+		this.added_locales[name] = localedef;
+	}
+
+	// Called during the initialisation of the game.  The final locale
+	// is typically unknown at this point.
+	patch_game_locale_definitions () {
+		let count = 0;
+		for (const locale in window.ig.LANG_DETAILS) {
+			if (this.added_locales[locale]) {
+				console.warn("Language " + locale
+					     + " already there");
+				delete this.added_locales[locale];
+			}
+			count++;
+		}
+		for (const lang in window.sc.LANGUAGE) {
+			// lang is not a locale name... this would have made
+			// things much simpler if it was...
+			const locale_index = window.sc.LANGUAGE[lang];
+			this.localedef_by_index[locale_index] = null;
+		}
+
+		const added = Object.keys(this.added_locales);
+		added.sort();
+		for (const locale of added) {
+			const options = this.added_locales[locale];
+			const locale_index = count++;
+			options.localizeme_global_index = locale_index;
+			window.ig.LANG_DETAILS[locale] = options;
+			window.sc.LANGUAGE["LOCALIZEME"+locale] = locale_index;
+			this.localedef_by_index[locale_index] = locale;
+		}
+		this.locale_count = count;
+	}
+
+	/**
+	 * Get the language that the game will use for the remaining of this
+	 * session.
+	 *
+	 * If unknown, a promise is returned, else, a locale name is returned.
+	 * Note that, when the game is loaded, the same information is
+	 * available at ig.currentLang.  During loading, however,
+	 * ig.currentLang might be incorrect.
+	 */
+	get_final_locale () {
+		return this.final_locale;
+	}
+	get_localedef_sync() {
+		return window.ig.LANG_DETAILS[this.final_locale];
+	}
+	async get_localedef() {
+		await this.final_locale;
+		return window.ig.LANG_DETAILS[this.final_locale];
+	}
+
+	/* 
+	 * patch lang/sc/gui.$locale.json/labels/options/language.group
+	 *
+	 * this is an array indexed by locale indexes, which is used in the
+	 * option menu to display languages.
+	 */
+	patch_game_language_list(language_list) {
+		for (let patched = language_list.length;
+		     patched < this.locale_count;
+		     ++patched) {
+			const locale = this.localedef_by_index[patched];
+			if (!locale) {
+				console.error("language array out of sync ?",
+					      "patched ", patched, " out of ",
+					      this.locale_count, " size is ",
+					      language_list.length);
+				language_list.push("ERROR");
+				continue;
+			}
+			const lang_name = this.added_locales[locale].language;
+			language_list.push(lang_name[this.final_locale]
+					   || lang_name[locale]
+					   || "ERROR NO LANGUAGE");
+		}
+	}
+
+	// Will only work for added locales, we can't get to the others.
+	get_index_of_locale(locale) {
+		const localedef = this.added_locales[locale];
+		if (!localedef)
+			return null;
+		return localedef.localizeme_global_index;
+	}
+
+	hook_into_game() {
+
+		// ig.LANG_DETAILS defined in game.config
+		// sc.LANGUAGE_ICON_MAPPING may need an update if we want flags
+		// one day.
+		// sc.LANGUAGE defined in game.feature.model.options-model
+		ig.module("localize_put_locales").requires(
+			"game.config",
+			"game.feature.model.options-model"
+		).defines(this.patch_game_locale_definitions.bind(this));
+
+		const localedef_by_index = this.localedef_by_index;
+		const index_by_locale = this.get_index_of_locale.bind(this);
+
+		// We completely ignore the locale from the save file for
+		// added locales.
+		const patch_loaded_globals = function (globals) {
+			const id = index_by_locale(ig.currentLang);
+			if (id !== null)
+				globals.options.language = id;
+			this.parent(globals);
+		};
+		// And we save a 0 if it is an added locale.
+		const patch_saved_globals = function (globals) {
+			this.parent(globals);
+			const locale_index = globals.options["language"];
+			if (localedef_by_index[locale_index])
+				globals.options["language"] = 0;
+		};
+
+		// Hack up the function called to check and set parameters,
+		// either initialized on startup, loaded from the save file or
+		// manually selected by the user. We can't really tell.
+		const patched_check_settings = function(setting) {
+			if (setting !== "language")
+				return this.parent(setting);
+
+			// This should not happen anymore, on the latest game
+			// versions.
+			if (!this.values.hasOwnProperty("language"))
+				this.values.language = 0;
+
+			let locale = localedef_by_index[this.values.language];
+
+			// Previous localize-me versions saved the locale index
+			// in the options.  If the index does not match a known
+			// locale, then recover from it quickly before bad
+			// things happens.
+			if (locale === undefined) {
+				console.log("Recovered from missing locale");
+				this.values.language = 0;
+				locale = null;
+			}
+
+			if (locale === null)
+				// native locale, we don't have access to
+				// the mapping...
+				return this.parent(setting);
+
+			localStorage.setItem("IG_LANG", locale);
+			console.log("Locale set to " + locale
+				    + " in localStorage");
+			return undefined;
+		};
+
+		ig.module("localize_patch_up_option_model").requires(
+			"game.feature.model.options-model"
+		).defines(function() {
+			sc.OptionModel.inject({
+				_checkSystemSettings : patched_check_settings,
+				onStorageGlobalLoad : patch_loaded_globals,
+				onStorageGlobalSave : patch_saved_globals,
+			});
+		});
+
+
+		const set_final_locale = this.set_final_locale.bind(this);
+		const init_lang = function() {
+			this.parent();
+			set_final_locale(ig.currentLang);
+		};
+
+		// ig.Lang, to find out when the locale is finally known.
+		// This is known in ig.main, and this constructor is called
+		// afterward. (this object is responsible for loading the
+		// lang files).
+		ig.module("localize_language_finalized").requires(
+			"impact.base.lang"
+		).defines(function() {
+			ig.Lang.inject({ init: init_lang });
+		});
+	}
+}
+
+// This thing is turning into a god class...
+class JSONPatcher {
+	constructor(game_locale_config) {
+		this.game_locale_config = game_locale_config;
+		this.map_file = undefined;
+		this.url_cache = {};
+
+		// Function returned by various methods when things are not
+		// found. This allows callers to either use it blindly or check
+		// if it not_found
+		this.not_found = () => null;
+	}
+
+	// Fetch the thing at url and return its xhr responseText.
+	fetch_stuff(url) {
+		return new Promise((resolve, reject) => {
+			const req = new XMLHttpRequest();
+			req.open("GET", url, true);
+			req.onerror = reject;
+			req.onreadystatechange = () => {
+				if (req.readyState !== req.DONE
+				    || req.status !== 200)
+					return; // reject ?
+				resolve(req.responseText);
+			};
+			req.send();
+		});
+	}
+	/*
+	 * If thing is a string, treat it as an URL and fetch its JSON,
+	 * else assume it is a function and call it without any argument.
+	 * The function may return a promise.
+	 *
+	 * JSON objects refered by their URL are cached.
+	 */
+	async fetch_or_call(thing) {
+		if (thing.constructor !== String)
+			return await thing();
+
+		let ret = this.url_cache[thing];
+		if (!ret) {
+			ret = this.fetch_stuff(thing);
+			ret = ret.then(json => JSON.parse(json));
+			this.url_cache[thing] = ret;
+		}
+		return ret;
+	}
+
+	async load_map_file() {
+		const localedef = await this.game_locale_config.get_localedef();
+		if (!localedef) {
+			console.error("trying to patch locales without locale");
+			return null;
+		} else if (!localedef.map_file || !localedef.from_locale)
+			// native, no need to patch
+			return null;
+
+		const result = await this.fetch_or_call(localedef.map_file);
+
+		if (typeof result === "function")
+			return result;
+
+		const prefix = localedef.url_prefix || "";
+		return (url_to_patch) => {
+			const ret = result[url_to_patch];
+			if (!ret)
+				return null;
+			return prefix + ret;
+		};
+	}
+
+	/*
+	 * Get a map file for the given current locale.
+	 *
+	 * This returns a map_file function that maps assets path relative to
+	 * assets/data/ into a translation pack url, or a function
+	 * returning a json or function.
+	 *
+	 * If nothing needs to be patched, this returns null.
+	 *
+	 * the map_file function is cached for later use.
+	 */
+	async get_map_file() {
+		if (this.map_file === undefined)
+			this.map_file = this.load_map_file();
+		return this.map_file;
+	}
+
+	/*
+	 * Get a translation pack for the given path and json and locale.
+	 *
+	 * The path must be relative to assets/data.
+	 *
+	 * This returns a function mapping a dict path to a translation result.
+	 * a dict path is basically a cursor to a element of a json file.
+	 * e.g. if file hello/world.json contains {"foo":["bar"]},
+	 * then dict path "hello/world.json/foo/0" points to "bar".
+	 *
+	 * a translation result is either a translated string or an object with
+	 * these optional fields:
+	 *
+	 * - orig: the original text from from_locale, if the loaded file
+	 *	    does not match this string, then the translation is likely
+	 *	    stale and should not be used
+	 * - text: the translated text to use.
+	 * - ciphertext: the translated text, encrypted with AES-CBC with
+	 *		 the key equal to MD5(original text). This idiotic
+	 *		 scheme is mainly here for copyright reasons.
+	 * - mac: a HMAC-MD5 of the translated text with key MD5(original text)
+	 *	  for detecting stale translations and not returning garbage.
+	 *
+	 * If a translation result is unknown, null or undefined is returned.
+	 */
+	async get_transpack(map_file, json_path, json) {
+		const url_or_func = map_file(json_path, json);
+		if (!url_or_func)
+			return this.not_found;
+
+		const result = await this.fetch_or_call(url_or_func);
+		if (typeof result !== "function")
+			return dict_path => result[dict_path];
+		return result;
+	}
+
+	/**
+	 * If 'json' is an Object, call cb(value, key) for each key.
+	 * If 'json' is an Array, call cb(value, index) for each element in it.
+	 * Will ignore anything else.
+	 */
+	walk_json(json, cb) {
+		if (json === null)
+			return;
+		if (json.constructor === Array)
+			json.forEach(cb);
+		if (json.constructor === Object)
+			for (const index in json)
+				if (json.hasOwnProperty(index))
+					cb(json[index], index);
+	}
+
+	/**
+	 * Iterate over all lang labels found in the object and call the
+	 * callback with (lang_label, dict_path).
+	 * It should be possible to modify the lang_label inside the callback.
+	 */
+	for_each_langlabels(json, dict_path_prefix, callback) {
+		const localedef = this.game_locale_config.get_localedef_sync();
+		if (json !== null && json[localedef.from_locale]) {
+			callback(json, dict_path_prefix);
+			return;
+		}
+		this.walk_json(json, (value, index) => {
+			const sub = dict_path_prefix + "/" + index;
+			this.for_each_langlabels(value, sub, callback);
+		});
+	}
+
+	/**
+	 * Get the HMAC of the given string or CryptoJS.lib.WordArray.
+	 *
+	 * key must be a CryptoJS.lib.WordArray
+	 *
+	 * Returns a CryptoJS.lib.WordArray with the hmacmd5
+	 */
+	hmacmd5(message, key) {
+		/// The loaded CryptoJS has a CryptoJS.HmacMD5 symbol ... that
+		/// does not work. It tries to reference CryptoJS.HMAC, which
+		/// doesn't exist. Hopefully, HMAC isn't complicated to code.
+		const outer = key.clone();
+		const to_words = x => CryptoJS.lib.WordArray.create(x);
+		// pad 16 bytes to 64 -> 48 bytes, which is 12 u32
+		outer.concat(to_words(Array.from({length: 12}, () => 0)));
+		const ip
+			= outer.words
+			       .map((v,i,a) => 0x6a6a6a6a ^ (a[i]^=0x5c5c5c5c));
+		outer.concat(CryptoJS.MD5(to_words(ip).concat(message)));
+		return CryptoJS.MD5(outer);
+	}
+
+	/**
+	 * Decrapt the given string using the given original text.
+	 *
+	 * Return null if the decryption failed.
+	 * May throw exceptions if CryptJS is buggy.
+	 */
+	decrapt_string(trans_result, orig) {
+		// the loaded CryptoJS only supports AES CBC with Pkcs7 and
+		// MD5... This should be more than enough for the "security"
+		// that we need: requiring the game files to get the
+		// translation.
+		const ciphertext
+			= CryptoJS.enc.Base64.parse(trans_result.ciphertext);
+		const key = CryptoJS.MD5(orig);
+		const param = CryptoJS.lib.CipherParams.create({ ciphertext,
+							         iv:key});
+		const text = CryptoJS.AES.decrypt(param, key,
+						  { mode: CryptoJS.mode.CBC,
+						    padding: CryptoJS.pad.Pkcs7,
+						    iv: key}
+		);
+		// This happens if the padding is incorrect, and the last byte
+		// of the decryption is longer than the actual input...
+		if (text.sigBytes < 0)
+			return null;
+		if (trans_result.mac) {
+			// if i don't do this, then calculating the md5 of it
+			// fails.
+			text.clamp();
+			// wait, CryptoJS.HmacMD5 does not work ? Crap.
+			// var correct_mac = CryptoJS.HmacMD5(text, key);
+			const correct_mac = this.hmacmd5(text, key);
+
+			const mac = CryptoJS.enc.Base64.stringify(correct_mac);
+			if (trans_result.mac !== mac)
+				// stale translation
+				return null;
+		}
+		return CryptoJS.enc.Utf8.stringify(text);
+	}
+
+	/**
+	 * Given a translation result, get the translation of the given
+	 * string or lang label.
+	 *
+	 * This function does not support lang labels mappings to array or
+	 * objects.  Thanksfully, these appear to be currently unused.
+	 *
+	 * Returns a string, or null if the translation is unknown.
+	 */
+	get_translated_string(trans_result, lang_label_or_string) {
+		const localedef = this.game_locale_config.get_localedef_sync();
+		if (trans_result === null || trans_result === undefined)
+			return null;
+		if (trans_result.constructor === String)
+			return trans_result;
+		const orig = (lang_label_or_string[localedef.from_locale]
+			      || lang_label_or_string);
+		if (trans_result.orig && orig && trans_result.orig !== orig)
+			// original text has changed, translation is stale.
+			return null;
+		if (trans_result.text)
+			return trans_result.text;
+		if (!trans_result.ciphertext)
+			return null;
+		try {
+			return this.decrapt_string(trans_result, orig);
+		} catch (e) {
+			console.error(e);
+			console.error("decryption failed hard, is translation "
+				      + "stale ?");
+			return null;
+		}
+	}
+
+	/**
+	 * Given a translation result, get the translation of the given
+	 * string or lang label.
+	 *
+	 * Always returns a string, unlike get_translated_string().
+	 *
+	 * If the translation is unknown, then call the missing callback
+	 * or return the original text prefixed by --.
+	 */
+	get_text_to_display(trans_result, lang_label_or_string, dict_path) {
+		const localedef = this.game_locale_config.get_localedef_sync();
+		let ret = this.get_translated_string(trans_result,
+						     lang_label_or_string);
+		if (ret !== null) {
+			if (!localedef.text_filter)
+				return ret;
+			return localedef.text_filter(ret, trans_result);
+		}
+
+		const missing = localedef.missing_cb;
+		if (missing)
+			ret = missing(lang_label_or_string, dict_path);
+		if (!ret) {
+			ret = (lang_label_or_string[localedef.from_locale]
+			       || lang_label_or_string);
+			ret = "--" + ret;
+		}
+		return ret;
+	}
+
+	/*
+	 * Patch the lang labels in the json object loaded at path
+	 * for the given current locale.
+	 *
+	 * Resolves to the json parameter, possibly modified.
+	 */
+	async patch_langlabels(path, json) {
+		const map_file = await this.get_map_file();
+		if (!map_file)
+			// native locale
+			return json;
+
+		const pack = await this.get_transpack(map_file, path, json)
+				       .catch(() => this.not_found);
+
+		const patch_lang_label = (lang_label, dict_path) => {
+			const trans = pack(dict_path, lang_label);
+			lang_label[ig.currentLang]
+				= this.get_text_to_display(trans, lang_label,
+							   dict_path);
+		};
+
+		this.for_each_langlabels(json, path, patch_lang_label);
+		return json;
+	}
+
+	/*
+	 * Return a pack suitable for patching langfiles.
+	 *
+	 * This is like get_transpack(), except this also handles if the
+	 * translation pack is a full langfile replacement.  Support for that is
+	 * deprecated.
+	 */
+	async get_langfile_pack(map_file, path, json) {
+		let pack;
+		try {
+			pack = await this.get_transpack(map_file, path, json);
+		} catch (error) {
+			console.warn("failed path", path, error);
+			return this.not_found;
+		}
+		if (pack("DOCTYPE") !== "STATIC-LANG-FILE")
+			return pack; // normal pack.
+
+		console.log("Using a langfile as a packfile is deprecated");
+		// it's not really a pack ... more like a json langfile that
+		// we parsed like a pack, but we can recover.
+		if (pack("feature") !== json["feature"]) {
+			console.error("mismatch between lang file feature :",
+				      pack("feature"), "!=", json["feature"]);
+			return this.not_found;
+		}
+		const labels = pack("labels");
+		return ((prefix, dict_path) => {
+			if (!dict_path.startsWith(prefix)) {
+				console.error("invalid dict path for langfile",
+					      dict_path);
+				return null;
+			}
+			let cursor = labels;
+			for (const component
+			     of dict_path.substr(prefix.length).split("/"))
+				cursor = cursor && cursor[component];
+			if (!cursor && cursor !== "")
+				return null;
+			return cursor;
+		}).bind(null, path + "/labels/");
+	}
+
+	/*
+	 * Assume the json object is a langfile residing at path
+	 * and patch every value in it using the given pack.
+	 *
+	 * Resolves to the json parameter after modifying it.
+	 */
+	patch_langfile_from_pack(json, path, pack) {
+		const recurse = (json, dict_path_prefix) =>
+			this.walk_json(json, (value, index) => {
+				const dict_path 
+					= dict_path_prefix + "/" + index;
+				if (value.constructor !== String) {
+					recurse(value, dict_path);
+					return;
+				}
+				let trans = pack(dict_path, value);
+				trans = this.get_text_to_display(trans, value,
+								 dict_path);
+				json[index] = trans;
+			});
+		recurse(json.labels, path + "/labels");
+	}
+
+	/*
+	 * Patch the given langfile loaded in json.
+	 *
+	 * path should be relative to assets/data/.
+	 *
+	 * If path is not found, the alternate path is tried next.
+	 *
+	 * Resolves to a modified json object.
+	 */
+	async patch_langfile(path, json, alt_path) {
+		const map_file = await this.get_map_file();
+		if (map_file) {
+			const get_langfile_pack = p => (
+				this.get_langfile_pack(map_file, p, json)
+			);
+			let pack = await get_langfile_pack(path);
+			if (pack === this.not_found && alt_path) {
+				pack = await get_langfile_pack(alt_path);
+				if (pack !== this.not_found)
+					console.log("Falling back from", path,
+						    "to", alt_path,
+						    "is deprecated.");
+				path = alt_path;
+			}
+			this.patch_langfile_from_pack(json, path, pack);
+		}
+		// patch the language list after patching the langfile,
+		// otherwise, the added languages will be considered
+		// as missing text.
+		if (path.startsWith("lang/sc/gui.")) {
+			const langs = json.labels.options.language.group;
+			if (langs.constructor !== Array) {
+				console.error("Could not patch language array",
+					      "game will likely crash !");
+				return json;
+			}
+			this.game_locale_config.patch_game_language_list(langs);
+		}
+		return json;
+	}
+
+	/*
+	 * Change the given url so it resolves to a file that exists.
+	 *
+	 * This should be used for url that are constructed using the added
+	 * locales, since these url points to files that do not exist.
+	 *
+	 * This function will change the url so it points to the locale's
+	 * from_locale, so that we can patch it.
+	 *
+	 * Returns a possibly modified url.
+	 */
+	get_replacement_url(url) {
+		if (!ig.currentLang)
+			console.error("need to patch url without locale set");
+		const localedef = window.ig.LANG_DETAILS[ig.currentLang];
+
+		if (!localedef || !localedef.from_locale)
+			return url;
+
+		const new_url = url.replace(ig.currentLang,
+					    localedef.from_locale);
+		if (new_url === url)
+			console.warn("Cannot find current locale in url", url);
+		return new_url;
+	}
+
+	determine_patch_opts(jquery_options, base_path_length) {
+		const relative_path
+			= jquery_options.url.slice(base_path_length);
+		const ret = {
+			relative_path,
+			patch_type: "lang_label"
+		};
+		if (jquery_options.context.constructor === ig.Lang) {
+			// langfile.
+			ret.url = this.get_replacement_url(jquery_options.url);
+			ret.patch_type = "lang_file";
+			ret.relative_path
+				= this.get_replacement_url(relative_path);
+			ret.alternate_relative_path = relative_path;
+		}
+		return ret;
+	}
+
+	async apply_patch_options(patch_opts, unpatched_json) {
+		if (patch_opts.patch_type === "lang_label")
+			return this.patch_langlabels(patch_opts.relative_path,
+						     unpatched_json);
+		else {
+			const alt_rel_path = patch_opts.alternate_relative_path;
+			return this.patch_langfile(patch_opts.relative_path,
+						   unpatched_json,
+						   alt_rel_path);
+		}
+	}
+
+	hook_into_game() {
+		const base_path = ig.root + "data/";
+		$.ajaxPrefilter("json", options => {
+
+			if (!options.url.startsWith(base_path))
+				return options;
+
+			const patch_opts
+				= this.determine_patch_opts(options,
+							    base_path.length);
+			options.url = patch_opts.url || options.url;
+
+			const apply_patch
+				= this.apply_patch_options
+				      .bind(this, patch_opts);
+
+
+			const old_resolve = options.success;
+			const old_reject = options.error;
+			options.success = function(unpatched_json) {
+				const resolve = old_resolve.bind(this);
+				const reject = old_reject.bind(this);
+	
+				apply_patch(unpatched_json).then(resolve,
+								 reject);
+			};
+			return options;
+		});
+	}
+}
+
+class LocalizeMe {
+	constructor(game_locale_config) {
+		this.game_locale_config = game_locale_config;
+	}
+	
 	/*
 	 * Locale name must only contain the language and country,
 	 * options can contains:
@@ -107,529 +875,12 @@ class LocalizeMe {
 	 *		                number instead of recoding everything
 	 *		                from scratch.
 	 *
-	 * This function should be called in postload. This object will be
-	 * available if you depend on this mod.
+	 * This function should be called before the game starts to run.
 	 */
 	add_locale(name, options) {
-		if (name in this.added_locales) {
-			console.error("Language " + name + " added twice");
-			return;
-		}
-		this.added_locales[name] = options
-	}
-
-	/*
-	 * Initialize all locales, assigning them ids for the game's
-	 * language indexes of doom.
-	 */
-	initialize_locales(game_lang_detail, languages_indexes) {
-		var count = 0;
-		for (var locale in game_lang_detail) {
-			if (this.added_locales[locale]) {
-				console.warn("Language " + name
-					     + " already there");
-				delete this.added_locales[locale];
-			}
-			count++;
-		}
-		for (var lang in languages_indexes)
-			this.locales_by_index[languages_indexes[lang]] = null;
-
-		var added = Object.keys(this.added_locales);
-		added.sort();
-		added.forEach(locale => {
-			var options = this.added_locales[locale];
-			var index = count++;
-			options.localizeme_global_index = index;
-			game_lang_detail[locale] = options;
-			languages_indexes["LOCALIZEME"+locale] = index;
-			this.locales_by_index[index] = locale;
-			this.locale_count++;
-		});
-	}
-
-	// Get a index for a given (added) locale name, or null if not found.
-	get_index_for_locale(locale) {
-		var options = this.added_locales[locale];
-		if (!options)
-			return null;
-		return options.localizeme_global_index;
-	}
-
-	/**
-	 * @brief Get a locale name given an language index.
-	 *
-	 * If this one of our locale, then return its locale, as it was
-	 * passed to add_locale().
-	 * If this is a game-native locale, then return null
-	 * else, return undefined.
-	 */
-	get_locale_by_index(index) {
-		return this.locales_by_index[index];
-	}
-
-	// Fetch the thing at url and return its xhr responseText.
-	fetch_stuff(url) {
-		return new Promise((resolve, reject) => {
-			var req = new XMLHttpRequest();
-			req.open('GET', url, true);
-			req.onerror = reject;
-			req.onreadystatechange = () => {
-				if (req.readyState !== req.DONE
-				    || req.status !== 200)
-					return; // reject ?
-				resolve(req.responseText);
-			};
-			req.send();
-		});
-	}
-	/*
-	 * If thing is a string, treat it as an URL and fetch its JSON,
-	 * else assume it is a function and call it without any argument.
-	 * The function may return a promise.
-	 *
-	 * JSON objects refered by their URL are cached.
-	 */
-	async fetch_or_call(thing) {
-		if (thing.constructor !== String) {
-			var ret = await thing();
-			return ret;
-		}
-		var ret = this.url_cache[thing];
-		if (!ret) {
-			ret = this.fetch_stuff(thing);
-			ret = ret.then(json => JSON.parse(json));
-			this.url_cache[thing] = ret;
-		}
-		return ret;
-	}
-
-	/*
-	 * Get a map file for the given current locale.
-	 *
-	 * This returns a map_file function that maps assets path relative to
-	 * assets/data/ into a translation pack url, or a function
-	 * returning a json or function.
-	 *
-	 * the map_file function is cached for later use.
-	 */
-	async get_map_file() {
-		if (this.current_locale === null)
-			await this.language_known;
-		if (this.map_file)
-			// may return a promise not resolved yet.
-			return this.map_file;
-
-		var localedef = this.added_locales[this.current_locale];
-		var url_or_func = localedef.map_file;
-
-		this.map_file = this.fetch_or_call(url_or_func)
-		    .then(result => {
-			var map_func;
-			if (typeof result !== "function") {
-				var prefix = localedef.url_prefix || '';
-				map_func = (url_to_patch) => {
-					var ret = result[url_to_patch];
-					if (ret)
-						ret = prefix + ret;
-					return ret || null;
-				};
-			} else
-				map_func = result;
-			this.map_file = map_func;
-			return map_func;
-		    });
-
-		// it's not loaded yet, but the promise will eventually resolve
-		this.from_locale = localedef.from_locale || 'en_US';
-		return this.map_file;
-	}
-	/*
-	 * Get a translation pack for the given path and json and locale.
-	 *
-	 * The path must be relative to assets/data.
-	 *
-	 * This returns a function mapping a dict path to a translation result.
-	 * a dict path is basically a cursor to a element of a json file.
-	 * e.g. if file hello/world.json contains {"foo":["bar"]},
-	 * then dict path "hello/world.json/foo/0" points to "bar".
-	 *
-	 * a translation result is either a translated string or an object with
-	 * these optional fields:
-	 *
-	 * - orig: the original text from from_locale, if the loaded file
-	 *	    does not match this string, then the translation is likely
-	 *	    stale and should not be used
-	 * - text: the translated text to use.
-	 * - ciphertext: the translated text, encrypted with AES-CBC with
-	 *		 the key equal to MD5(original text). This idiotic
-	 *		 scheme is mainly here for copyright reasons.
-	 * - mac: a HMAC-MD5 of the translated text with key MD5(original text)
-	 *	  for detecting stale translations and not returning garbage.
-	 *
-	 * If a translation result is unknown, null or undefined is returned.
-	 */
-	async get_transpack(json_path, json) {
-		var map_file = await this.get_map_file();
-		var url_or_func = map_file(json_path, json);
-		var result;
-		if (url_or_func) {
-			result = await this.fetch_or_call(url_or_func);
-			if (typeof result !== "function") {
-				var saveme = result;
-				result = dict_path => saveme[dict_path];
-			}
-		} else
-			result = not_found;
-		return result;
-	}
-
-	/**
-	 * If 'json' is an Object, call cb(value, key) for each key.
-	 * If 'json' is an Array, call cb(value, index) for each element in it.
-	 * Will ignore anything else.
-	 */
-	walk_json(json, cb) {
-		if (json === null)
-			return;
-		if (json.constructor === Array)
-			json.forEach(cb);
-		if (json.constructor === Object)
-			for (var index in json)
-				if (json.hasOwnProperty(index))
-					cb(json[index], index);
-	}
-
-	/**
-	 * Iterate over all lang labels found in the object and call the
-	 * callback with (lang_label, dict_path).
-	 * It should be possible to modify the lang_label inside the callback.
-	 */
-	for_each_langlabels(json, dict_path_prefix, callback) {
-		if (json !== null && json[this.from_locale])
-			return callback(json, dict_path_prefix);
-		this.walk_json(json, (value, index) => {
-			var sub = dict_path_prefix + '/' + index;
-			this.for_each_langlabels(value, sub, callback);
-		});
-	}
-
-	/**
-	 * Get the HMAC of the given string or CryptoJS.lib.WordArray.
-	 *
-	 * key must be a CryptoJS.lib.WordArray
-	 *
-	 * Returns a CryptoJS.lib.WordArray with the hmacmd5
-	 */
-	hmacmd5(message, key) {
-		/// The loaded CryptoJS has a CryptoJS.HmacMD5 symbol ... that
-		/// does not work. It tries to reference CryptoJS.HMAC, which
-		/// doesn't exist. Hopefully, HMAC isn't complicated to code.
-		var outer = key.clone();
-		const to_words = x => CryptoJS.lib.WordArray.create(x);
-		// pad 16 bytes to 64 -> 48 bytes, which is 12 u32
-		outer.concat(to_words(Array.from({length: 12}, () => 0)));
-		var ip = outer.words
-			      .map((v,i,a) => 0x6a6a6a6a ^ (a[i]^=0x5c5c5c5c));
-		outer.concat(CryptoJS.MD5(to_words(ip).concat(message)));
-		return CryptoJS.MD5(outer);
-	}
-
-	/**
-	 * Decrapt the given string using the given original text.
-	 *
-	 * Return null if the decryption failed.
-	 * May throw exceptions if CryptJS is buggy.
-	 */
-	decrapt_string(trans_result, orig) {
-		// the loaded CryptoJS only supports AES CBC with Pkcs7 and
-		// MD5... This should be more than enough for the "security"
-		// that we need: requiring the game files to get the
-		// translation.
-		var ciphertext
-			= CryptoJS.enc.Base64.parse(trans_result.ciphertext);
-		var key = CryptoJS.MD5(orig);
-		var param = CryptoJS.lib.CipherParams.create({ ciphertext,
-							       iv:key})
-		var text = CryptoJS.AES.decrypt(param, key,
-						{ mode: CryptoJS.mode.CBC,
-						  padding: CryptoJS.pad.Pkcs7,
-						  iv: key}
-		);
-		// This happens if the padding is incorrect, and the last byte
-		// of the decryption is longer than the actual input...
-		if (text.sigBytes < 0)
-			return null;
-		if (trans_result.mac) {
-			// if i don't do this, then calculating the md5 of it
-			// fails.
-			text.clamp();
-			// wait, CryptoJS.HmacMD5 does not work ? Crap.
-			// var correct_mac = CryptoJS.HmacMD5(text, key);
-			var correct_mac = this.hmacmd5(text, key);
-
-			var mac = CryptoJS.enc.Base64.stringify(correct_mac);
-			if (trans_result.mac !== mac)
-				// stale translation
-				return null;
-		}
-		return CryptoJS.enc.Utf8.stringify(text);
-	}
-
-	/**
-	 * Given a translation result, get the translation of the given
-	 * string or lang label.
-	 *
-	 * This function does not support lang labels mappings to array or
-	 * objects.  Thanksfully, these appear to be currently unused.
-	 *
-	 * Returns a string, or null if the translation is unknown.
-	 */
-	get_translated_string(trans_result, lang_label_or_string) {
-		if (trans_result === null || trans_result === undefined)
-			return null;
-		if (trans_result.constructor === String)
-			return trans_result;
-		var orig = (lang_label_or_string[this.from_locale]
-			    || lang_label_or_string);
-		if (trans_result.orig && orig && trans_result.orig !== orig)
-			// original text has changed, translation is stale.
-			return null;
-		if (trans_result.text)
-			return trans_result.text;
-		if (!trans_result.ciphertext)
-			return null;
-		try {
-			return this.decrapt_string(trans_result, orig);
-		} catch (e) {
-			console.error(e);
-			console.error("decryption failed hard, is translation stale ?");
-			return null;
-		}
-	}
-
-	/**
-	 * Given a translation result, get the translation of the given
-	 * string or lang label.
-	 *
-	 * Always returns a string, unlike get_translated_string().
-	 *
-	 * If the translation is unknown, then call the missing callback
-	 * or return the original text prefixed by --.
-	 */
-	get_text_to_display(trans_result, lang_label_or_string, dict_path) {
-		var ret = this.get_translated_string(trans_result,
-						     lang_label_or_string);
-		var localedef = this.added_locales[this.current_locale];
-		if (ret !== null) {
-			if (localedef.text_filter)
-				ret = localedef.text_filter(ret, trans_result);
-			return ret;
-		}
-
-		var missing = localedef.missing_cb;
-		if (missing)
-			ret = missing(lang_label_or_string, dict_path);
-		if (!ret)
-			ret = "--" + (lang_label_or_string[this.from_locale]
-				      || lang_label_or_string);
-		return ret;
-	}
-
-	/*
-	 * Patch the lang labels in the json object loaded at path
-	 * for the given current locale.
-	 *
-	 * Resolves to the json parameter, possibly modified.
-	 */
-	async patch_langlabels(path, json) {
-		var locale = this.added_locales[this.current_locale];
-		if (!locale)
-			return json;
-
-		var pack = await this.get_transpack(path, json)
-				     .catch(() => not_found);
-
-		this.for_each_langlabels(json, path,
-					 (lang_label, dict_path) => {
-			var trans = pack(dict_path, lang_label);
-			var text = this.get_text_to_display(trans, lang_label);
-			lang_label[this.current_locale] = text;
-		});
-		return json;
-	}
-
-	/*
-	 * Return a pack suitable for patching langfiles.
-	 *
-	 * This is like get_transpack(), except this also handles if the
-	 * translation pack is a full langfile replacement.
-	 */
-	async get_langfile_pack(path, json) {
-		var pack = await this.get_transpack(path, json)
-				     .catch((a) => {
-					     console.warn("failed path", path,
-							  a);
-					     return not_found;
-				     });
-		if (pack("DOCTYPE") !== "STATIC-LANG-FILE")
-			return pack; // normal pack.
-
-		// it's not really a pack ... more like a json langfile that
-		// we parsed like a pack, but we can recover.
-		if (pack("feature") !== json["feature"]) {
-			console.error("mismatch between lang file feature :",
-				      pack("feature"), "!=", json["feature"]);
-			return not_found;
-		}
-		var labels = pack("labels");
-		return ((prefix, dict_path) => {
-			if (!dict_path.startsWith(prefix)) {
-				console.error("invalid dict path for langfile",
-					      dict_path);
-				return null;
-			}
-			var cursor = labels;
-			var path = dict_path.substr(prefix.length).split("/");
-			path.forEach(component => {
-				cursor = cursor && cursor[component];
-			});
-			if (!cursor && cursor !== "")
-				return null;
-			return cursor;
-		}).bind(null, path + "/labels/");
-	}
-
-	/*
-	 * Assume the json object is a langfile residing at path
-	 * and patch every value in it using the given pack.
-	 *
-	 * Resolves to the json parameter after modifying it.
-	 */
-	patch_langfile_from_pack(json, path, pack) {
-		var recurse = (json, dict_path_prefix) => {
-			this.walk_json(json, (value, index) => {
-				var dict_path = dict_path_prefix + "/" + index;
-				if (value.constructor !== String)
-					return recurse(value, dict_path);
-				var trans = pack(dict_path, value);
-				trans = this.get_text_to_display(trans, value);
-				json[index] = trans;
-				// we are not allowing array to be extended
-				// but that should rarely happen anyway.
-				// it could be done later if required.
-			});
-		};
-		recurse(json.labels, path + '/labels');
-	}
-
-	/*
-	 * Patch the gui language list with our new locales.
-	 *
-	 * This should be used to patch the json object for the
-	 * lang/sc/gui.*.json files, since the game will expect the language id
-	 * to exist in the language array.  This allows those locales to be
-	 * selected in the language settings.
-	 */
-	patch_language_list(gui_langfile_json) {
-		var array = gui_langfile_json.labels.options.language.group;
-		if (array.constructor !== Array) {
-			console.error("Could not patch language array",
-				      "game will likely crash !");
-			return array;
-		}
-		for (var patched = 0; patched < this.locale_count; ++patched) {
-			var locale = this.locales_by_index[array.length];
-			if (!locale) {
-				console.error("language array out of sync ?",
-					      "patched ", patched, " out of ",
-					      this.locale_count, " size is ",
-					      array.length);
-				array.push("ERROR");
-				continue;
-			}
-			var lang_name = this.added_locales[locale].language;
-			array.push(lang_name[this.current_locale]
-				   || lang_name[locale]
-				   || "ERROR NO LANGUAGE");
-		}
-	}
-
-	/*
-	 * Patch the given langfile loaded in json.
-	 *
-	 * path should be realive to assets/data/.
-	 *
-	 * If path is not found, the alternate path is tried next.
-	 *
-	 * Resolves to a modified json object.
-	 */
-	async patch_langfile(path, json, alt_path) {
-
-		if (this.added_locales[this.current_locale]) {
-			var pack = await this.get_langfile_pack(path, json);
-			if (pack === not_found && alt_path) {
-				pack = await this.get_langfile_pack(alt_path,
-								    json);
-				path = alt_path;
-			}
-			this.patch_langfile_from_pack(json, path, pack);
-		}
-		// patch the language list after patching the langfile,
-		// otherwise, the added languages will be considered
-		// as missing text.
-		if (path.startsWith("lang/sc/gui."))
-			this.patch_language_list(json);
-		return json;
-	}
-
-	/*
-	 * Change the given url so it resolves to a file that exists.
-	 *
-	 * This should be used for url that are constructed using the added
-	 * locales, since these url points to files that do not exist.
-	 *
-	 * This function will change the url so it points to the locale's
-	 * from_locale, so that we can patch it.
-	 *
-	 * Returns a possibly modified url.
-	 */
-	get_replacement_url(url) {
-		if (this.current_locale === null)
-			console.error("need to patch url without locale set");
-		var localedef = this.added_locales[this.current_locale];
-
-		if (!localedef)
-			return url;
-
-		var new_url = url.replace(this.current_locale,
-					  localedef.from_locale);
-		if (new_url === url)
-			console.warn("Cannot find current locale in url", url);
-		return new_url;
-	}
-
-	/// Resolves to the final language once it is known for sure.
-	wait_for_language_known() {
-		return this.language_known;
-	}
-	/// Set the actual locale chosen by the game.
-	/// It should not change until the game restarts.
-	set_actual_locale(locale) {
-		this.current_locale = locale;
-		this.language_known_resolve(locale);
-	}
-
-
-	// Return the current locale definition for the current locale.
-	// If the actual is a native locale, then return null.
-	// Caller should arrange for the final locale to be known first,
-	// by e.g. awaiting wait_for_language_known().
-	get_current_localedef() {
-		return this.added_locales[this.current_locale];
+		this.game_locale_config.add_locale_definition(name, options);
 	}
 }
-window.localizeMe = new LocalizeMe();
 
 /*
  * Patches a multifont.
@@ -637,23 +888,26 @@ window.localizeMe = new LocalizeMe();
  * This class is typically instanciated once per multifont to patch.
  */
 class FontPatcher {
-	constructor() {
+	constructor(multifont, localedef_promise) {
 		this.metrics_loaded_promise = new Promise((resolve) => {
 			this.resolve_metrics_loaded = resolve;
 		});
 		this.context = null;
+		this.localedef_promise = localedef_promise;
+		this.localedef_promise.then(localedef => {
+			this.localedef_promise = localedef;
+		});
 	}
 
 	/*
 	 * Call the pre_patch_hook then wait for it to complete.
 	 */
-	async prepare_patch(multifont) {
-		await window.localizeMe.wait_for_language_known();
+	async pre_patch(multifont) {
+		const localedef = await this.localedef_promise;
 		this.context = { char_height: multifont.charHeight,
 				 size_index: multifont.sizeIndex,
 				 base_image: multifont.data
 			       };
-		var localedef = window.localizeMe.get_current_localedef();
 		if (localedef && localedef.pre_patch_font)
 			await localedef.pre_patch_font(this.context);
 	}
@@ -661,68 +915,126 @@ class FontPatcher {
 	/*
 	 * Fetch metrics then unblock all calls waiting for metrics to be
 	 * available.
+	 *
+	 * Also patch the base image after extracting its metrics.
 	 */
-	metrics_loaded(multifont) {
+	on_metrics_loaded(multifont) {
 		this.context.get_char_pos = ((c) => {
-			var index = c.charCodeAt(0);
-			index -= multifont.firstChar;
-			// don't ask about the +1.
-			var width = multifont.widthMap[index] + 1;
-			var height = multifont.charHeight;
-			var x = multifont.indicesX[index];
-			var y = multifont.indicesY[index];
+			const index = c.charCodeAt(0) - multifont.firstChar;
+			// don't ask me about the +1, ask the game.
+			const width = multifont.widthMap[index] + 1;
+			const height = multifont.charHeight;
+			const x = multifont.indicesX[index];
+			const y = multifont.indicesY[index];
 			return { x, y, width, height };
 		}).bind(multifont);
 		this.context.set_char_pos = ((c, rect) => {
-			var index = c.charCodeAt(0);
-			index -= multifont.firstChar;
+			const index = c.charCodeAt(0) - multifont.firstChar;
 			multifont.indicesX[index] = rect.x;
 			multifont.indicesY[index] = rect.y;
 			multifont.widthMap[index] = rect.width - 1;
-			if (rect.height != multifont.charHeight)
-				console.warn("bad height for",
-					     c);
+			if (rect.height !== multifont.charHeight)
+				console.warn("bad height for", c);
 		}).bind(multifont);
 
 		this.resolve_metrics_loaded();
+
+		multifont.data = this.patch_image(multifont.data);
 	}
 
 	/*
-	 * Wait for the metrics to be available, then patch the given image.
-	 *
-	 * Resolves to a patched canvas/image whatever.
+	 * Patch the image, using the localedef's patch_font() method.
 	 */
-	async patch_image_async(image) {
-		await this.metrics_loaded_promise;
-		return this.patch_image_sync(image);
-	}
-
-	/*
-	 * Patch the image synchronously.
-	 */
-	patch_image_sync(image) {
-		var localedef = window.localizeMe.get_current_localedef();
+	patch_image(image) {
+		// it shouldn't be a promise at this point.
+		const localedef = this.localedef_promise;
 		if (!localedef || !localedef.patch_font)
 			return image;
-		var ret = localedef.patch_font(image, this.context);
+		const ret = localedef.patch_font(image, this.context);
 		if (!ret) {
 			console.warn("patch_font() returned nothing");
-			ret = image;
+			return image;
 		}
 		return ret;
 	}
 
+	/**
+	 * Inject a method, but only for this instance.
+	 * The parent is passed as first parameter.
+	 */
+	static inject_instance(instance, field, functor) {
+		const old = instance[field].bind(instance);
+		instance[field] = functor.bind(instance, old);
+	}
+
+	/** Inject font patcher into a ig.Font instance.
+	 *
+	 * This instance is assumed to be loaded as part of a color set of a
+	 * multifont.
+	 */
+	inject_color_set_onload(font) {
+		const cls = this.constructor;
+		cls.inject_instance(font, "onload", (old_onload, ignored) => {
+			this.metrics_loaded_promise.then(() => {
+				font.data = this.patch_image(font.data);
+				old_onload(ignored);
+			});
+		});
+	}
+
+	static hook_into_game(game_locale_config) {
+		const localedef_promise = game_locale_config.get_localedef();
+		const create_patcher
+			= multifont => new FontPatcher(multifont,
+						       localedef_promise);
+
+		// ig.Font
+		ig.module("localize_patch_font").requires(
+			"impact.base.font"
+		).defines(function() {
+			// We want to do two things here:
+			// - patch the flags (later ...)
+			// ig.Font.inject({...})
+			// - patch the font to match the encoding of the locale.
+			ig.MultiFont.inject({
+				"init": function(...varargs) {
+					this.parent.apply(this, varargs);
+					this.FONTPATCHER = create_patcher(this);
+				},
+				"pushColorSet": function(key, img, color) {
+					this.parent(key, img, color);
+					// patch its onload() method.
+					this.FONTPATCHER
+					    .inject_color_set_onload(img);
+				},
+				"onload": function(ignored) {
+					// This is called only for the base
+					// font.
+
+					// calls _loadMetrics()
+					// then the rest of the loading sequence
+					const old_parent
+						= this.parent.bind(this,
+								   ignored);
+
+					this.FONTPATCHER
+					    .pre_patch(this).then(old_parent);
+				},
+				"_loadMetrics": function(img) {
+					this.parent(img);
+					this.FONTPATCHER.on_metrics_loaded(this
+									  );
+				}
+			});
+		});
+	}
 }
 
 class NumberFormatter {
-	constructor(loc_manager) {
+	constructor(game_locale_config) {
 		// this may stay null if we don't need to patch anything.
 		this.localedef = null;
-
-		loc_manager.wait_for_language_known().then(() => {
-			var localedef = loc_manager.get_current_localedef();
-			if (!localedef)
-				return; // native locale, don't do anything.
+		game_locale_config.get_localedef().then(localedef => {
 			if (localedef.format_number
 			    || localedef.number_locale) {
 				// we sometimes need to unparse numbers, so
@@ -736,14 +1048,14 @@ class NumberFormatter {
 	}
 	// Assume that localedef.number_locale exists and format with it.
 	format_number_default(number, frac_precision, unit) {
-		var locale = this.localedef.number_locale;
-		var options = {
+		const locale = this.localedef.number_locale;
+		const options = {
 			minimumFractionDigits: frac_precision,
 			maximumFractionDigits: frac_precision
 		};
 
-		var suffix = '';
-		if (unit === '%') {
+		let suffix = "";
+		if (unit === "%") {
 			number /= 100;
 			options.style = "percent";
 		} else if (unit)
@@ -758,7 +1070,7 @@ class NumberFormatter {
 		frac_precision = frac_precision || 0;
 		unit = unit || null;
 		number = Number(number);
-		var ret = null;
+		let ret = null;
 		if (this.localedef.number_locale)
 			ret = this.format_number_default(number,
 							 frac_precision,
@@ -775,12 +1087,12 @@ class NumberFormatter {
 	// Parse a number that had gone through the game formatter, based on
 	// that regex o̶f̶ ̶d̶o̶o̶m̶ of stack overflow.
 	unformat_en_us_number(number_str) {
-		return Number(number_str.replace(/,/g, '', number_str));
+		return Number(number_str.replace(/,/g, "", number_str));
 	}
 
 	hook_var_access() {
-		var formatter = this;
-		var find_number = splitted => {
+		const formatter = this;
+		const find_number = splitted => {
 			if (splitted[0] !== "misc")
 				return null;
 			if (splitted[1] === "localNum")
@@ -789,28 +1101,29 @@ class NumberFormatter {
 				return ig.vars.get("tmp." + splitted[2]);
 			return null;
 		};
-		var patched_on_var_access = function(varname, splitted) {
+		const patched_var_access = function(varname, splitted) {
 			if (formatter.localedef) {
-				var number = find_number(splitted);
+				const number = find_number(splitted);
 				if (number !== null)
 					return formatter.format_number(number);
 			}
 			return this.parent(varname, splitted);
 		};
 		ig.module("localizeme_menu_model_numerics")
-		  .requires("game.feature.menu.menu-model").defines(() => {
-			sc.MenuModel.inject({
-				onVarAccess: patched_on_var_access
-			});
-		});
+		  .requires("game.feature.menu.menu-model")
+		  .defines(() => {
+				   sc.MenuModel.inject({
+					  onVarAccess: patched_var_access
+				   });
+			   });
 	}
 	hook_meters_statistics () {
-		var format_meters = () => {
+		const format_meters = () => {
 			if (this.localedef === null)
 				return null; // native number formatting
-			var steps = sc.stats.getMap("player", "steps") || 0;
+			const steps = sc.stats.getMap("player", "steps") || 0;
 			// 1.632 m per step ? that's a pretty big step.
-			var meters = steps * 1.632;
+			const meters = steps * 1.632;
 			if (meters < 1000)
 				return this.format_number(meters, 0, "m");
 			return this.format_number(meters / 1000, 2, "km");
@@ -819,19 +1132,22 @@ class NumberFormatter {
 		ig.module("localizeme_reimplement_steps")
 		  .requires("game.feature.menu.gui.stats.stats-gui-builds")
 		  .defines(() => {
-			var general = sc.STATS_BUILD[sc.STATS_CATEGORY.GENERAL];
-			// This one uses suffix to add fractional parts, sigh.
-			general.meters.localize_me_format = format_meters;
-		});
+				   const cat_gen = sc.STATS_CATEGORY.GENERAL;
+				   const general = sc.STATS_BUILD[cat_gen];
+				   const meters = general.meters;
+				   // This one uses suffix to add fractional
+				   // parts, sigh.
+				   meters.localize_me_format = format_meters;
+			   });
 
 	}
 	hook_statistics() {
 		// remaining:
 		// sc.StatPercentNumber
 		// sc.NumberGui (big one)
-		var formatter = this;
+		const formatter = this;
 
-		var patched_keyvalue_init = function(a, data, c) {
+		const patched_keyvalue_init = function(a, data, c) {
 			this.parent(a, data, c);
 			if (formatter.localedef === null)
 				return;
@@ -840,7 +1156,7 @@ class NumberFormatter {
 				return;
 
 			if (data.localize_me_format) {
-				var v = data.localize_me_format();
+				const v = data.localize_me_format();
 				if (v)
 					this.valueGui.setText(v);
 				return;
@@ -853,44 +1169,49 @@ class NumberFormatter {
 				// it with localize_me_format above.
 				return;
 
-			var number = this.valueGui.text;
+			let number = this.valueGui.text;
 			number = formatter.unformat_en_us_number(number);
 			number = formatter.format_number(number);
 			this.valueGui.setText(number);
 		};
-		var patched_keyvalue_set = function(num, data, suffix) {
-			if (formatter.localedef === null)
-				return this.parent(a, data, c);
-			var text = data ? formatter.format_number(num) : num;
-			this.valueGui.setText(text + suffix ? suffix : '');
+		const patched_keyvalue_set = function(num, data, suffix) {
+			// never used ?
+			if (formatter.localedef === null) {
+				this.parent(num, data, suffix);
+				return;
+			}
+			const text = data ? formatter.format_number(num) : num;
+			this.valueGui.setText(text + (suffix || ""));
 		};
 
-		var patched_keyvaluepercent_init = function(a, data, c) {
+		const patched_keyvaluepercent_init = function(a, data, c) {
 			this.parent(a, data, c);
 			if (formatter.localedef === null)
 				return;
-			var text = this.numberGui.text;
-			var index = text.indexOf('\\');
-			var number = text.slice(0, index);
+			const text = this.numberGui.text;
+			// the text is followed by "\\[arrow-percent]"
+			const index = text.indexOf("\\");
+			let number = text.slice(0, index);
 			number = formatter.unformat_en_us_number(number);
 			number = formatter.format_number(number);
 			this.numberGui.setText(number + text.slice(index));
 		};
 
+
+		// sc.STATS_ENTRY_TYPE.KeyCurMax also uses the dreaded
+		// formatter, but it only formats integers between
+		// 0 and something like 125, so is that really needed ?
 		ig.module("localizeme_stat_type_numerics")
 		  .requires("game.feature.menu.gui.stats.stats-types")
 		  .defines(() => {
-			sc.STATS_ENTRY_TYPE.KeyValue.inject({
-				init: patched_keyvalue_init,
-				setValue: patched_keyvalue_set
-			});
-			sc.STATS_ENTRY_TYPE.KeyValuePercent.inject({
-				init: patched_keyvaluepercent_init
-			});
-			// sc.STATS_ENTRY_TYPE.KeyCurMax also uses the dreaded
-			// formatter, but it only formats integers between
-			// 0 and something like 125, so is that really needed ?
-		});
+				   sc.STATS_ENTRY_TYPE.KeyValue.inject({
+					   init: patched_keyvalue_init,
+					   setValue: patched_keyvalue_set
+				   });
+				   sc.STATS_ENTRY_TYPE.KeyValuePercent.inject({
+					   init: patched_keyvaluepercent_init
+				   });
+			   });
 
 	}
 
@@ -901,191 +1222,31 @@ class NumberFormatter {
 	}
 }
 
-{
-	var loc_me = window.localizeMe;
+(() => {
+	const game_locale_config = new GameLocaleConfiguration();
+	game_locale_config.hook_into_game();
 
-	// ig.LANG_DETAILS defined in game.config
-	// sc.LANGUAGE_ICON_MAPPING need an update if we want flags one day.
-	// sc.LANGUAGE defined in game.feature.model.options-model
-	ig.module("localize_put_locales").requires(
-		"game.config",
-		"game.feature.model.options-model"
-	).defines(function() {
-		loc_me.initialize_locales(window.ig.LANG_DETAILS,
-					  window.sc.LANGUAGE);
-	});
+	const json_patcher = new JSONPatcher(game_locale_config);
+	json_patcher.hook_into_game();
 
-	/// Patch the hidden struct defining the native locale -> index mapping.
-	ig.module("localize_patch_up_option_model").requires(
-		"game.feature.model.options-model"
-	).defines(function() {
-		var patched_check_settings = function(setting) {
-			if (setting !== "language")
-				return this.parent(setting);
+	FontPatcher.hook_into_game(game_locale_config);
 
-			// If init() didn't find the language, then
-			// this.values["language"] will not exist. Fill it.
-			if (!this.values.hasOwnProperty("language")) {
-				var locale = ig.currentLang;
-				var index = loc_me.get_index_for_locale(locale);
-				if (index == null)
-					index = 0;
-				this.values.language = index;
-				console.log("Found missing locale " + locale);
-				console.log("Set index to " + index);
-			}
-			var locale = loc_me.get_locale_by_index(this.values
-								    .language);
-
-			// Now resume normal processing, which is to actually
-			// set the variable.
-			if (!locale)
-				// native locale, we don't have access to
-				// the mapping...
-				return this.parent(setting);
-
-			localStorage.setItem("IG_LANG", locale);
-			console.log("Locale set to " + locale
-				    + " in localStorage");
-
-		};
-		var patch_loaded_globals = function(globals) {
-			var id = loc_me.get_index_for_locale(ig.currentLang);
-			// ig.currentLang is probably set from localStorage.
-			// if it is an added locale, then ignore the 'english'
-			// that we leave in the options.
-			if (id != null)
-				globals.options["language"] = id;
-			this.parent(globals);
-		};
-		var patch_saved_globals = function(globals) {
-			this.parent(globals);
-			var langid = globals.options["language"];
-			// do not store the id of an added locale into the
-			// options, because the game can not recover from
-			// a missing id.  That, and ids of added locales may
-			// change anyway.
-			if (loc_me.get_locale_by_index(langid))
-				// Store english in the options.
-				globals.options["language"] = 0;
-		};
-
-		sc.OptionModel.inject({
-			_checkSystemSettings : patched_check_settings,
-			onStorageGlobalLoad: patch_loaded_globals,
-			onStorageGlobalSave: patch_saved_globals
-		});
-	});
-
-	// ig.Lang, to find out when the locale is finally known.
-	// This is known in ig.main, and this constructor is called afterward.
-	ig.module("localize_language_finalized").requires(
-		"impact.base.lang"
-	).defines(function() {
-		ig.Lang.inject({
-			'init': function() {
-				this.parent();
-				loc_me.set_actual_locale(ig.currentLang);
-			}
-		});
-	});
-
-	// ig.Font
-	ig.module("localize_patch_font").requires(
-		"impact.base.font"
-	).defines(function() {
-		// We want to do two things here:
-		// - patch the flags (later ...)
-		// ig.Font.inject({...})
-		// - patch the font to match the encoding of the locale.
-		ig.MultiFont.inject({
-			'init': function(...varargs) {
-				this.parent.apply(this, varargs);
-				this.FONTPATCHER = new FontPatcher();
-			},
-			'pushColorSet': function(key, img, color) {
-				this.parent(key, img, color);
-
-				var old_onload = img.onload.bind(img);
-				var fontpatcher = this.FONTPATCHER;
-				// let's patch those images only. let the other
-				// mods patch up everything else :)
-				img.onload = function() {
-					fontpatcher.patch_image_async(this.data
-					).then((result) => {
-						this.data = result;
-					}).then(old_onload.bind(this));
-				};
-			},
-			'onload': function(img) {
-				// This is called only for the base font.
-				// NOTE: img seems to be ignored by the parent.
-				//
-				// then() will call _loadMetrics
-				var then = this.parent.bind(this, img);
-				this.FONTPATCHER.prepare_patch(this).then(then);
-			},
-			'_loadMetrics': function(img) {
-				this.parent(img);
-				this.FONTPATCHER.metrics_loaded(this);
-
-				// Start by patching the base font right away.
-				this.data = this.FONTPATCHER.patch_image_sync(
-					img
-				);
-			}
-		});
-	})
-
-	var number_formatter = new NumberFormatter(loc_me);
+	const number_formatter = new NumberFormatter(game_locale_config);
 	number_formatter.hook_into_game();
 
-	$.ajaxPrefilter("json", function(options) {
-		var old_url = options.url;
+	window.localizeMe = new LocalizeMe(game_locale_config);
 
-		var base_path = ig.root + "data/";
-		if (!old_url.startsWith(base_path))
-			return options;
-		var relpath = old_url.slice(base_path.length);
-		var altrelpath = null;
-
-		var is_lang_label = true;
-		if (options.context.constructor === ig.Lang) {
-			var lang = ig.currentLang;
-			options.url = loc_me.get_replacement_url(old_url, lang);
-			is_lang_label = false;
-			altrelpath = relpath;
-			relpath = options.url.slice(base_path.length)
-		}
-
-		var old_resolve = options.success;
-		var old_reject = options.error;
-
-		options.success = function(unpatched_json) {
-			var resolve = old_resolve.bind(this);
-			var reject = old_reject.bind(this);
-			var res;
-			if (is_lang_label)
-				res = loc_me.patch_langlabels(relpath,
-							      unpatched_json);
-			else
-				res = loc_me.patch_langfile(relpath,
-							    unpatched_json,
-							    altrelpath);
-			res.then(resolve, reject);
-		};
-		return options;
-	});
 
 	if (window.location.search.indexOf("en_LEA") !== -1) { // test
-		var lea = ["Hi", "Lea", "Why", "How", "Sorry"];
-		var pick = ()=>lea[Math.floor(Math.random() * lea.length)];
-		var leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
+		const lea = ["Hi", "Lea", "Why", "How", "Sorry"];
+		const pick = ()=>lea[Math.floor(Math.random() * lea.length)];
+		const leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
 		// note: since we accept any file, the first picked pack file
 		// will use en_US, not en_LEA...
-		var tdp = a => "lang/sc/gui.en_US.json/labels/title-screen/"+a;
+		const tdp 
+			= a => "lang/sc/gui.en_US.json/labels/title-screen/"+a;
 
-		var sample = { // sample pack
+		const sample = { // sample pack
 			[tdp("start")]:{ text:"Hi Lea!" },
 			[tdp("continue")]:"Hz!",
 			[tdp("exit")]:{ orig:"Exit", text:"Bye!"},
@@ -1104,7 +1265,8 @@ class NumberFormatter {
 		};
 		window.localizeMe.add_locale("en_LEA", {
 			from_locale: "en_US",
-			map_file: () => (path) => (dict_path) => sample,
+			// () => (file_path) => (dict_path) => pack
+			map_file: () => () => () => sample,
 			missing_cb: leaize,
 			language: {
 				en_LEA: "Hi Lea!",
@@ -1113,8 +1275,8 @@ class NumberFormatter {
 			text_filter: text => text.replace("z", "i"),
 			patch_font: (source, context) => {
 				if (!context.done) {
-					var ee = context.get_char_pos('\u00e9');
-					context.set_char_pos('e', ee);
+					let ee = context.get_char_pos("\u00e9");
+					context.set_char_pos("e", ee);
 					context.done = true;
 				}
 				return source;
@@ -1125,6 +1287,5 @@ class NumberFormatter {
 			)
 		});
 	}
-}
-
 })();
+

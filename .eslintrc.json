@@ -1,0 +1,31 @@
+{
+	"env": {
+		"browser": true,
+		"es6": true
+	},
+	"parserOptions": {
+		"ecmaVersion": 2017
+	},
+	"globals": {
+		"Promise":"readonly",
+		"ig": "readonly",
+		"sc": "readonly",
+		"CryptoJS": "readonly",
+		"$": "readonly"
+	},
+	"extends": "eslint:recommended",
+	"rules": {
+		"indent": [ "error", "tab" ],
+		"linebreak-style": [ "error", "unix" ],
+		"quotes": [ "error", "double" ],
+		"semi": [ "error", "always" ],
+		"block-scoped-var": [ "error" ],
+		"complexity": [ "error" ],
+		"consistent-return": [ "error" ],
+		"eqeqeq": [ "error" ],
+		"max-len": [ "error", { "tabWidth": 8 }],
+		"no-mixed-spaces-and-tabs": [ "error", "smart-tabs" ],
+		"no-console": [ "off" ],
+		"no-var": [ "error" ]
+	}
+}
