@@ -80,16 +80,18 @@ In top of this, Localize-Me adds the following options and callbacks.
   defining the `nl_NL` locale, then `language` must at a minimum contain
   the `nl_NL` field.
 
-- `map_file` (Mandatory!) (String or AsyncFunction): Specifies a map file URL
-  or function.  See the *Map File* section for details.
+- `map_file` (String or AsyncFunction): Specifies a map file URL or function.
+  See the *Map File* section for details.  This field is not mandatory, but if
+  if it is not set, then no patching will take place.
+
+- `from_locale` (Mandatory!) (String): The language where you translated the
+  text from.  This is used in various places and is mandatory most of the time.
+  See *Translations* for details.
+
 - `url_prefix` (String): Prefix every URL found in the map file by this.  Using
   something based on `document.currentScript.src` is advisable.  Note that
   the map file URL is not prefixed with this value.
   See the *Map file* for details.
-- `from_locale` (String): The language where you translated the text from.
-  This is used in various places and is strongly recommended, if not mandatory
-  in most cases.
-  See *Translations* for details.
 
 - `missing_cb` (Function): Localize-Me calls this callback when it finds a text
   does not have a translation, or a stale one. See *Translations* for details.
