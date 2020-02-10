@@ -1092,7 +1092,7 @@ class FontPatcher {
 	 * Prepare the context for the base image
 	 */
 	prepare_context_for_base_image(multifont) {
-		this.context.get_char_pos = ((c) => {
+		this.context.get_char_pos = (c) => {
 			const index = c.charCodeAt(0) - multifont.firstChar;
 			// don't ask me about the +1, ask the game.
 			const width = multifont.widthMap[index] + 1;
@@ -1100,15 +1100,15 @@ class FontPatcher {
 			const x = multifont.indicesX[index];
 			const y = multifont.indicesY[index];
 			return { x, y, width, height };
-		}).bind(multifont);
-		this.context.set_char_pos = ((c, rect) => {
+		};
+		this.context.set_char_pos = (c, rect) => {
 			const index = c.charCodeAt(0) - multifont.firstChar;
 			multifont.indicesX[index] = rect.x;
 			multifont.indicesY[index] = rect.y;
 			multifont.widthMap[index] = rect.width - 1;
 			if (rect.height !== multifont.charHeight)
 				console.warn("bad height for", c);
-		}).bind(multifont);
+		};
 		this.context.reserve_char
 			= this.reserve_free_space.bind(this, multifont);
 
