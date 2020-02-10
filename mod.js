@@ -972,7 +972,18 @@ class FontPatcher {
 		const localedef = this.localedef_promise;
 		if (!localedef || !localedef.patch_font)
 			return image;
-		const ret = localedef.patch_font(image, this.context);
+
+		let canvas = image;
+		if (!canvas.getContext) {
+			canvas = document.createElement("canvas");
+			canvas.width = image.width;
+			canvas.height = image.height;
+			const context2d = canvas.getContext("2d");
+			context2d.clearRect(0, 0, canvas.width, canvas.height);
+			context2d.drawImage(image, 0, 0);
+		}
+
+		const ret = localedef.patch_font(canvas, this.context);
 		if (!ret) {
 			console.warn("patch_font() returned nothing");
 			return image;

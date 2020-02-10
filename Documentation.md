@@ -624,18 +624,17 @@ For each font size, the following happens:
     colors share the same metrics, so it only needs to be called once for each
     font size.
 - If `patch_font` is specified, then it is called multiple times for each
-  color, as follows: `patch_font(image_or_canvas, context)`.
+  color, as follows: `patch_font(canvas, context)`.
 
-  The game uses Image or HTMLCanvas objects interchangeably, so you should be
-  prepared to handle both.  The actual image content is either the white font or
-  one of the various color for that font.
+  canvas is a HTMLCanvas.
+  The actual canvas content is either the white font or one of the various color
+  for that font.
 
   This function should return an image or a canvas (the game can handle both
   types). The caller is advised to patch
-each image in the same way, possibly by calculating what needs to be done once,
-storing it in the `context` object, then blindly applying these change to each
-passed `image`.  Note that due to the way the game works, `patch_font` cannot
-wait.
+  each image in the same way, possibly by calculating what needs to be done
+  once, storing it in the `context` object, then blindly applying these change
+  to each passed `image`.  Note that due to the way the game works, `patch_font`  cannot wait.
 - Each time `patch_font` returns, Localize-Me hands out the image to the game.
 
 Note that font patching happens very early in the game bootstrapping process.
