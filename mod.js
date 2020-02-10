@@ -833,12 +833,28 @@ class LocalizeMe {
 	 *		  Can be used to change the encoding of displayed text,
 	 *		  add missing characters or more.  Called with
 	 *		  (loaded_image (not scaled), context), where context
-	 *		  is unique per multifont and contains the methods:
+	 *		  is unique per multifont and contains these fields
+	 *		  and methods:
+	 *
+	 *		  char_height : the height of the font
+	 *		  size_index : the size index as used by the game
+	 *		  base_image : the white image loaded by the game
+	 *		  color : the color of the currently-patched image
+	 *		  patched_base_image : the white image patched by
+	 *		  patch_font
+	 *
 	 *		  get_char_pos(c) -> { x, y, width, height } to get
 	 *		  the position of a char in loaded_image,
 	 *		  set_char_pos(c, { x, y, width, height }) to change it,
 	 *		  reserve_char(canvas, width) -> {x, y, width, height}
 	 *		  to allocate free space in the font.
+	 *		  import_from_font(canvas_dest,ig_font,start_char) to
+	 *		  import all characters of an ig.Font into the canvas
+	 *		  using reserve_char(), starting at start_char.
+	 *		  recolor_from_base_image(canvas_dest) to take the white
+	 *		  image and recolor it into canvas_dest
+	 *
+	 *
 	 *		  This function can not block, use pre_patch_font to
 	 *		  perform blocking operations (like, loading images)
 	 *
@@ -1064,15 +1080,69 @@ class FontPatcher {
 		this.context.reserve_char
 			= this.reserve_free_space.bind(this, multifont);
 
+		this.context.import_from_font = (canvas, font, start_char) => {
+			const start_code = start_char.charCodeAt(0);
+			const context2d = canvas.getContext("2d");
+			for (let i = 0; i < font.indicesX.length; ++i) {
+				const width = font.widthMap[i] + 1;
+				const rect = this.context.reserve_char(canvas,
+								       width);
+
+				const char_ = String.fromCharCode(start_code
+								  + i);
+				this.context.set_char_pos(char_, rect);
+				const srcx = font.indicesX[i];
+				const srcy = font.indicesY[i];
+				context2d.drawImage(font.data, srcx, srcy,
+						    width, font.charHeight,
+						    rect.x, rect.y, rect.width,
+						    rect.height);
+			}
+			return canvas;
+		};
+
+		this.context.recolor_from_base_image = (canvas) => {
+			const context2d = canvas.getContext("2d");
+			context2d.clearRect(0, 0, canvas.width, canvas.height);
+			context2d.drawImage(this.context.patched_base_image,
+					    0, 0);
+
+			const firstpixel
+				= (context2d.getImageData(0,0,
+							 canvas.width,
+							 canvas.height)
+				   .data.slice(0, 4));
+			// that's the only way i know to extract a css color
+			// components...
+			context2d.fillStyle = this.context.color;
+			context2d.fillRect(0, 0, 1, 1);
+			const imgdata = context2d.getImageData(0,0,
+							       canvas.width,
+							       canvas.height);
+			const data = imgdata.data;
+			const color = data.slice(0, 3);
+			// restore the mess
+			firstpixel.forEach((v,i) => data[i] = v);
+
+			for (let i = 0; i < data.length; i += 4)
+				if (data[i] && data[i+3])
+					color.forEach((v,j) => data[i+j] = v);
+
+			context2d.putImageData(imgdata, 0, 0);
+			return canvas;
+		};
+
 		this.resolve_metrics_loaded();
 
-		multifont.data = this.patch_image(multifont.data);
+		multifont.data = this.patch_image(multifont.data,
+						  multifont.color);
+		this.context.patched_base_image = multifont.data;
 	}
 
 	/*
 	 * Patch the image, using the localedef's patch_font() method.
 	 */
-	patch_image(image) {
+	patch_image(image, color) {
 		// it shouldn't be a promise at this point.
 		const localedef = this.localedef_promise;
 		if (!localedef || !localedef.patch_font)
@@ -1086,6 +1156,7 @@ class FontPatcher {
 			canvas = cls.resize_image(canvas, height);
 		}
 
+		this.context.color = color;
 		const ret = localedef.patch_font(canvas, this.context);
 		if (!ret) {
 			console.warn("patch_font() returned nothing");
@@ -1108,11 +1179,11 @@ class FontPatcher {
 	 * This instance is assumed to be loaded as part of a color set of a
 	 * multifont.
 	 */
-	inject_color_set_onload(font) {
+	inject_color_set_onload(font, color) {
 		const cls = this.constructor;
 		cls.inject_instance(font, "onload", (old_onload, ignored) => {
 			this.metrics_loaded_promise.then(() => {
-				font.data = this.patch_image(font.data);
+				font.data = this.patch_image(font.data, color);
 				old_onload(ignored);
 			});
 		});
@@ -1141,7 +1212,8 @@ class FontPatcher {
 					this.parent(key, img, color);
 					// patch its onload() method.
 					this.FONTPATCHER
-					    .inject_color_set_onload(img);
+					    .inject_color_set_onload(img,
+								     color);
 				},
 				"onload": function(ignored) {
 					// This is called only for the base

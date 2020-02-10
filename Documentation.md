@@ -632,9 +632,19 @@ For each font size, the following happens:
     keeping its content.  This function should be called the first time
     `patch_font` is called, or else, unexpected results may occur, since
     different colors must have the same layout.
+  * `recolor_from_base_image`: a function that, when called for non-base images,
+    use the base image as a template and recreate it with a different color.
+    It takes one canvas parameter, which is where the resulting image will be
+    written.  It will return this parameter.
+  * `import_from_font`: a helper function that take a canvas, an ig.Font
+    and a starting character.  This function will take every character from the
+    ig.Font and add them to the canvas.  It internally uses `reserve_char`
+    and `set_char_pos` with consecutive characters, starting with `start_char`.
+    Note that loading an ig.Font should be done in `pre_patch_font`.
 
 - If `patch_font` is specified, then it is called multiple times for each
   color, as follows: `patch_font(canvas, context)`.
+  The color of the current image is present in `context.color`.
 
   canvas is a HTMLCanvas.
   The actual canvas content is either the white font or one of the various color
@@ -649,6 +659,36 @@ For each font size, the following happens:
 
 Note that font patching happens very early in the game bootstrapping process.
 Therefore, most of the game modules will probably be unavailable.
+
+Note that when using `import_from_font`, the ig.Font should be already loaded
+when `patch_font` is called, therefore it should be loaded in `pre_patch_font`.
+The following loading sequence is suggested:
+```
+	pre_patch_font: async context => {
+		if (context.char_height === 13) {
+			const font = new ig.Font("path/to/font/image.png", 13);
+			context.my_font = font;
+			return new Promise(resolve => {
+				const old_onload = font.onload;
+				font.onload = (a...) => {
+					old_onload.apply(font, a);
+					resolve();
+				};
+			});
+		}
+	},
+	patch_font: (image, context) => {
+		if (context.char_height === 13)
+			if (!context.imported13) {
+				context.import_from_font(image, context.my_font,
+							 "\u0100");
+				context.imported13 = true;
+			} else
+				context.recolor_from_base_image(image);
+		}
+		return image;
+	},
+```
 
 ### System fonts
 
