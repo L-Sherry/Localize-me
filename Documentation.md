@@ -120,6 +120,9 @@ In top of this, Localize-Me adds the following options and callbacks.
   implementation is enough most of the time.  See *Number formatting* for
   details.
 
+- `misc_time_function (Function): If set, then Localize-Me will patch the
+  `\v[misc.time]` variable reference.  See *Time Formatting* for details.
+
 ## Translations
 
 The game has two primary mechanisms for text internationalization.
@@ -687,3 +690,28 @@ Currently, this may be null, '%', 'm' or 'km'.
 Localize-Me will render the number with its default implementation then
 pass the result in this parameter. Thus, it is possible to apply small
 modifications to this value and return it.
+
+## Time Formatting
+
+The game does not display the current time, except in one location:
+The description of the "Golden Revolver" item (327).
+
+It reads "It's \v[misc.time]", and the game currently hardcodes `\v[misc.time]`
+as being the current time, unless the current hour is between 11 and 13
+(inclusive), in which case it displays "It's High Noon".
+(As of Jan 2019, this is currently a bug, because at noon, the text
+ "It's It's High Noon" will be displayed as a result.)
+
+If the `misc_time_function` option is given, Localize-me will replace this
+hardcoded implementation by the given function.  It should return the
+translation of this text.
+
+An implementation could be:
+```
+misc_time_function: () => {
+	const date = new Date();
+	if (date.getHours() >= 11 && date.getHours() <= 13)
+		return "Zwölf Uhr mittags";
+	return `${date.getHours()}:${date.getMinutes()}`;
+},
+```

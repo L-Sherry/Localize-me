@@ -876,6 +876,22 @@ class LocalizeMe {
 	 *		                this possible to reuse this formatted
 	 *		                number instead of recoding everything
 	 *		                from scratch.
+	 * - "misc_time_function" If set, then this function will be called
+	 *			  when the game want the value \v[misc.time].
+	 *			  This variable is used in the Golden Revolver
+	 *			  description.
+	 *			  (item-database.json/items/327/description)
+	 *
+	 *			  The game defines it as an hardcoded english
+	 *			  text, dynamically generated in the code.
+	 *			  If the current time is between 11:00 am and
+	 *			  1:59 pm, it returns "It's High Noon", else,
+	 *			  It returns the formatted current time.
+	 *
+	 *			  Note that the game currently has a bug,
+	 *			  because it references it as
+	 *			  "It's \v[misc.time]", so when it's noon,
+	 *			  it displays "It's It's High Noon".
 	 *
 	 * This function should be called before the game starts to run.
 	 */
@@ -1228,6 +1244,34 @@ class NumberFormatter {
 	}
 }
 
+class VariablePatcher {
+	constructor (game_locale_config) {
+		this.misctime_func = null;
+		game_locale_config.get_localedef().then(localedef => {
+			this.misc_time_function = localedef.misc_time_function;
+		});
+	}
+
+	hook_into_game() {
+		const me = this;
+
+		const override_misctime = function(parm, varpath) {
+			if (varpath[0] === "misc" && varpath[1] === "time"
+			    && me.misc_time_function)
+				return me.misc_time_function();
+			return this.parent(parm, varpath);
+		};
+
+		ig.module("localizeme_misc_var")
+		  .requires("game.feature.menu.menu-model")
+		  .defines(() => {
+				sc.MenuModel.inject({
+					onVarAccess: override_misctime
+				});
+			});
+	}
+}
+
 (() => {
 	const game_locale_config = new GameLocaleConfiguration();
 	game_locale_config.hook_into_game();
@@ -1239,6 +1283,9 @@ class NumberFormatter {
 
 	const number_formatter = new NumberFormatter(game_locale_config);
 	number_formatter.hook_into_game();
+
+	const variable_patcher = new VariablePatcher(game_locale_config);
+	variable_patcher.hook_into_game();
 
 	window.localizeMe = new LocalizeMe(game_locale_config);
 
