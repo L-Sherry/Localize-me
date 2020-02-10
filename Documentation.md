@@ -612,8 +612,10 @@ For each font size, the following happens:
   starting at character number 32 (a space) and continuing up to character 255.
   The game only checks for the transparency value of the line below it to know
   the width of one character.
+
 - Localize-Me then intercepts the next call right after the game parsed the
   font metrics. It then augments the context with these fields:
+
   * `get_char_pos`: a function that, given a character (as a string), returns
     an object with fields `x`, `y`, `width` and `height`, indicating where the
     character is in the image.
@@ -641,21 +643,48 @@ For each font size, the following happens:
     ig.Font and add them to the canvas.  It internally uses `reserve_char`
     and `set_char_pos` with consecutive characters, starting with `start_char`.
     Note that loading an ig.Font should be done in `pre_patch_font`.
+  * `color`: the color of the base image.  It is white except for the
+    `tiny` text.
 
-- If `patch_font` is specified, then it is called multiple times for each
-  color, as follows: `patch_font(canvas, context)`.
-  The color of the current image is present in `context.color`.
+- If `patch_base_font` is specified, then it is called as follows:
+  `patch_base_font(canvas, context)`.
 
-  canvas is a HTMLCanvas.
-  The actual canvas content is either the white font or one of the various color
-  for that font.
+  canvas is a HTMLCanvas with the base font image, and context is the context
+  described above.
+
+  This function must return an image or a canvas (the game can handle both
+  types) to use as a font.
+  The positions of the characters can be queried and modified with
+  `context.set_char_pos()` and `context.get_char_pos()`, it is possible to
+  allocate new spots for characters with `context.reserve_char()` or import
+  characters from a custom font with `import_from_font`.
+
+  Note that due to the way the game works, `patch_base_font` cannot be
+  asynchronous.
+
+  For backward compatibility, if `patch_base_font` isn't defined but
+  `patch_font` is, `patch_font` is called instead.
+
+- The returned image is then handed to the game.  Then Localize-Me will
+  allow the colored images to be loaded.
+  if `patch_font` is defined, it is called multiple times for each colored
+  image, as follows: `patch_font(canvas, context)`.
+
+  The color of the current image is present in `context.color` as a string (css
+  color).  canvas is a HTMLCanvas.  context is still the same object, but
+  the `reserve_char` and `import_from_font` are no longer available.
 
   This function should return an image or a canvas (the game can handle both
   types). The caller is advised to patch
   each image in the same way, possibly by calculating what needs to be done
-  once, storing it in the `context` object, then blindly applying these change
-  to each passed `image`.  Note that due to the way the game works, `patch_font`  cannot wait.
-- Each time `patch_font` returns, Localize-Me hands out the image to the game.
+  in `patch_base_font` and replicating it for each image.
+
+  If `patch_font` isn't defined but `patch_base_font` or `pre_patch_font`
+  is defined, then a default implementation that simply uses
+  `context.recolor_from_base_image()` is used instead.
+
+- Each time `patch_font` returns, Localize-Me hands out the colored image to
+  the game.
 
 Note that font patching happens very early in the game bootstrapping process.
 Therefore, most of the game modules will probably be unavailable.
@@ -677,14 +706,11 @@ The following loading sequence is suggested:
 			});
 		}
 	},
-	patch_font: (image, context) => {
-		if (context.char_height === 13)
-			if (!context.imported13) {
-				context.import_from_font(image, context.my_font,
-							 "\u0100");
-				context.imported13 = true;
-			} else
-				context.recolor_from_base_image(image);
+	patch_base_font: (image, context) => {
+		if (context.char_height === 13) {
+			// new characters will be available starting at \u0100
+			context.import_from_font(image, context.my_font,
+						 "\u0100");
 		}
 		return image;
 	},

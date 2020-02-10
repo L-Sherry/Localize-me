@@ -829,34 +829,59 @@ class LocalizeMe {
 	 *		   used to change the encoding of the text to match the
 	 *		   font or apply similar transformations.  Called with
 	 *		   (text, translation object)
-	 * - "patch_font" an optional function called for each loaded font.
+	 *
+	 * - "patch_base_font" an optional function called for each loaded font.
+	 *		  If this function isn't defined but patch_font is, then
+	 *		  patch_font is used instead of this method (backward
+	 *		  compatibility from when patch_base_font didn't exist)
+	 *
 	 *		  Can be used to change the encoding of displayed text,
 	 *		  add missing characters or more.  Called with
-	 *		  (loaded_image (not scaled), context), where context
-	 *		  is unique per multifont and contains these fields
-	 *		  and methods:
+	 *		  (loaded_image (not scaled), context), where
+	 *		  loadded_image is the base image of the font with
+	 *		  white characters. context is unique per multifont
+	 *		  and contains these fields and methods:
 	 *
-	 *		  char_height : the height of the font
-	 *		  size_index : the size index as used by the game
-	 *		  base_image : the white image loaded by the game
-	 *		  color : the color of the currently-patched image
-	 *		  patched_base_image : the white image patched by
-	 *		  patch_font
+	 *		  char_height : the height of the font.
+	 *
+	 *		  size_index : the size index as used by the game.
+	 *
+	 *		  base_image : the white image loaded by the game.
+	 *
+	 *		  color : the color of the currently-patched image.
 	 *
 	 *		  get_char_pos(c) -> { x, y, width, height } to get
-	 *		  the position of a char in loaded_image,
-	 *		  set_char_pos(c, { x, y, width, height }) to change it,
+	 *		  the position of a char in loaded_image.
+	 *
+	 *		  set_char_pos(c, { x, y, width, height }) to change it.
+	 *
 	 *		  reserve_char(canvas, width) -> {x, y, width, height}
 	 *		  to allocate free space in the font.
+	 *
 	 *		  import_from_font(canvas_dest,ig_font,start_char) to
 	 *		  import all characters of an ig.Font into the canvas
 	 *		  using reserve_char(), starting at start_char.
+	 *
 	 *		  recolor_from_base_image(canvas_dest) to take the white
 	 *		  image and recolor it into canvas_dest
 	 *
+	 *		  This context is carried out to patch_font, so you
+	 *		  may store stuff in there.
 	 *
 	 *		  This function can not block, use pre_patch_font to
-	 *		  perform blocking operations (like, loading images)
+	 *		  perform asynchronous operations (like, loading images)
+	 *
+	 * - "patch_font" an optional function called for each color of each
+	 *		  font.  It is called after "patch_base_font".
+	 *		  Can be used to change the encoding of displayed text,
+	 *		  add missing characters or more.  Called with
+	 *		  (loaded_image (not scaled), context), where context
+	 *		  is unique per multifont and contains the same fields
+	 *		  as "patch_base_font", minus `reserve_char` and
+	 *		  `import_from_font`.
+	 *
+	 *		  This function can not block, use pre_patch_font to
+	 *		  perform asynchronous operations (like, loading images)
 	 *
 	 * - "pre_patch_font" an optional function that is called before the
 	 *		      first call to patch_font.  Unlike patch_font,
@@ -931,7 +956,15 @@ class FontPatcher {
 		this.context = null;
 		this.resized_height = null;
 		this.free_space = null;
-		this.localedef_promise = localedef_promise;
+
+		this.localedef_promise = localedef_promise.then(localedef => {
+			if (localedef.patch_font || localedef.pre_patch_font
+			    || localedef.patch_base_font)
+				return localedef;
+			return null; // means there is nothing to patch.
+		});
+		// some non-async code need the localedef. Hopefully, we await
+		// it before they are called.
 		this.localedef_promise.then(localedef => {
 			this.localedef_promise = localedef;
 		});
@@ -942,6 +975,8 @@ class FontPatcher {
 	 */
 	async pre_patch(multifont) {
 		const localedef = await this.localedef_promise;
+		if (!localedef)
+			return;
 		this.context = { char_height: multifont.charHeight,
 				 size_index: multifont.sizeIndex,
 				 base_image: multifont.data,
@@ -949,7 +984,7 @@ class FontPatcher {
 					 multifont.data = new_image;
 				 }
 			       };
-		if (localedef && localedef.pre_patch_font)
+		if (localedef.pre_patch_font)
 			await localedef.pre_patch_font(this.context);
 		delete this.context.set_base_image;
 	}
@@ -1054,12 +1089,9 @@ class FontPatcher {
 	}
 
 	/*
-	 * Fetch metrics then unblock all calls waiting for metrics to be
-	 * available.
-	 *
-	 * Also patch the base image after extracting its metrics.
+	 * Prepare the context for the base image
 	 */
-	on_metrics_loaded(multifont) {
+	prepare_context_for_base_image(multifont) {
 		this.context.get_char_pos = ((c) => {
 			const index = c.charCodeAt(0) - multifont.firstChar;
 			// don't ask me about the +1, ask the game.
@@ -1131,59 +1163,93 @@ class FontPatcher {
 			context2d.putImageData(imgdata, 0, 0);
 			return canvas;
 		};
+	}
 
+	/*
+	 * Fetch metrics then unblock all calls waiting for metrics to be
+	 * available.
+	 *
+	 * Also patch the base image after extracting its metrics.
+	 */
+	on_metrics_loaded(multifont) {
 		this.resolve_metrics_loaded();
 
-		multifont.data = this.patch_image(multifont.data,
-						  multifont.color);
+		// it shouldn't be a promise at this point.
+		const localedef = this.localedef_promise;
+		if (!localedef)
+			return;
+
+		this.prepare_context_for_base_image(multifont);
+		this.patch_image(multifont, multifont.color, true);
 		this.context.patched_base_image = multifont.data;
+
+		// some operations are no longer possible now.
+		delete this.context.reserve_char;
+		delete this.context.import_from_font;
 	}
 
 	/*
 	 * Patch the image, using the localedef's patch_font() method.
 	 */
-	patch_image(image, color) {
-		// it shouldn't be a promise at this point.
+	patch_image(ig_image, color, is_base_font) {
+		// it shouldn't be a promise or null at this point.
 		const localedef = this.localedef_promise;
-		if (!localedef || !localedef.patch_font)
-			return image;
 
-		let canvas = image;
+		let func_to_call = null;
+
+		if (is_base_font) {
+			func_to_call = localedef.patch_base_font;
+			if (!func_to_call)
+				func_to_call = localedef.patch_font;
+		} else {
+			func_to_call = localedef.patch_font;
+			if (!func_to_call)
+				// default implementation that recolors
+				// colored fonts from the base font.
+				func_to_call = (canvas, context) =>
+					context.recolor_from_base_image(canvas);
+		}
+
+		if (!func_to_call)
+			return;
+
+		let canvas = ig_image.data;
 		if (this.resized_height !== null || !canvas.getContext) {
 			const cls = this.constructor;
 			const height
-				= this.resized_height || canvas.height;
-			canvas = cls.resize_image(canvas, height);
+				= this.resized_height || ig_image.data.height;
+			canvas = cls.resize_image(ig_image.data, height);
 		}
 
 		this.context.color = color;
-		const ret = localedef.patch_font(canvas, this.context);
-		if (!ret) {
+		const ret = func_to_call(canvas, this.context);
+		if (ret)
+			ig_image.data = ret;
+		else
 			console.warn("patch_font() returned nothing");
-			return image;
-		}
-		return ret;
 	}
 
 	/**
 	 * Inject a method, but only for this instance.
-	 * The parent is passed as first parameter.
+	 * The parent is passed as first parameter of functor.
 	 */
 	static inject_instance(instance, field, functor) {
 		const old = instance[field].bind(instance);
 		instance[field] = functor.bind(instance, old);
 	}
 
-	/** Inject font patcher into a ig.Font instance.
+	/** Inject font patcher into a ig.Image instance.
 	 *
 	 * This instance is assumed to be loaded as part of a color set of a
 	 * multifont.
 	 */
-	inject_color_set_onload(font, color) {
+	inject_color_set_onload(image, color) {
 		const cls = this.constructor;
-		cls.inject_instance(font, "onload", (old_onload, ignored) => {
-			this.metrics_loaded_promise.then(() => {
-				font.data = this.patch_image(font.data, color);
+		cls.inject_instance(image, "onload", (old_onload, ignored) => {
+			this.metrics_loaded_promise.then(async () => {
+				// metrics_loaded depends on localedef_promise
+				if (this.localedef_promise)
+					this.patch_image(image, color, false);
 				old_onload(ignored);
 			});
 		});
@@ -1195,7 +1261,9 @@ class FontPatcher {
 			= multifont => new FontPatcher(multifont,
 						       localedef_promise);
 
-		// ig.Font
+		// ig.MultiFont
+		// Here we are praying that we are instanciated before
+		// game.feature.font.font-system.
 		ig.module("localize_patch_font").requires(
 			"impact.base.font"
 		).defines(function() {
