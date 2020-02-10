@@ -833,10 +833,12 @@ class LocalizeMe {
 	 *		  Can be used to change the encoding of displayed text,
 	 *		  add missing characters or more.  Called with
 	 *		  (loaded_image (not scaled), context), where context
-	 *		  is unique per multifont and contains the two methods:
+	 *		  is unique per multifont and contains the methods:
 	 *		  get_char_pos(c) -> { x, y, width, height } to get
-	 *		  the position of a char in loaded_image and
-	 *		  set_char_pos(c, { x, y, width, height }) to change it.
+	 *		  the position of a char in loaded_image,
+	 *		  set_char_pos(c, { x, y, width, height }) to change it,
+	 *		  reserve_char(canvas, width) -> {x, y, width, height}
+	 *		  to allocate free space in the font.
 	 *		  This function can not block, use pre_patch_font to
 	 *		  perform blocking operations (like, loading images)
 	 *
@@ -911,6 +913,8 @@ class FontPatcher {
 			this.resolve_metrics_loaded = resolve;
 		});
 		this.context = null;
+		this.resized_height = null;
+		this.free_space = null;
 		this.localedef_promise = localedef_promise;
 		this.localedef_promise.then(localedef => {
 			this.localedef_promise = localedef;
@@ -932,6 +936,105 @@ class FontPatcher {
 		if (localedef && localedef.pre_patch_font)
 			await localedef.pre_patch_font(this.context);
 		delete this.context.set_base_image;
+	}
+
+	/**
+	 * Increase the height of an ig.Image
+	 *
+	 * This only works for images without filters or resizing.
+	 *
+	 * If new_height is equal to image_or_canvas.height, then this
+	 * turns an image into a canvas.
+	 */
+	static resize_image(image_or_canvas, new_height) {
+		console.assert(new_height >= image_or_canvas.height);
+		// won't work for generic images. Use with care.
+		const canvas = document.createElement("canvas");
+		canvas.width = image_or_canvas.width;
+		canvas.height = new_height;
+		const context2d = canvas.getContext("2d");
+		context2d.drawImage(image_or_canvas, 0, 0);
+		return canvas;
+	}
+
+	/**
+	 * Increase the height of an ig.Image without changing its canvas
+	 *
+	 * This only works for images without filters or resizing, where the
+	 * ig.Image contains a canvas.
+	 */
+	static resize_image_inplace(canvas, new_height) {
+		const offscreen = document.createElement("canvas");
+		{
+			offscreen.width = canvas.width;
+			offscreen.height = canvas.height;
+			const context2d = offscreen.getContext("2d");
+			context2d.drawImage(canvas, 0, 0);
+		}
+		// this will implicitely clear the canvas...
+		canvas.height = new_height;
+		const context2d = canvas.getContext("2d");
+		context2d.drawImage(offscreen, 0, 0);
+	}
+
+	/**
+	 * Find free space for a new character of given width.
+	 *
+	 * Returns a {x, y, width, height} rect.  Will resize the canvas
+	 * if necessary.
+	 *
+	 * Probably not a good idea to do this after the base image has been
+	 * handed back into the game.
+	 */
+	reserve_free_space(font, canvas, width) {
+		console.assert(font.indicesX.length, "must be loaded first");
+		if (this.free_space === null) {
+			this.free_space = { x:0, y:0 };
+			for (let i = 0; i < font.indicesX.length; ++i) {
+				const y = font.indicesY[i];
+				const x = (font.indicesX[i]
+					   + font.widthMap[i] + 2);
+
+				if ((y - this.free_space.y
+				     || x - this.free_space.x) <= 0)
+					continue;
+				this.free_space.x = x;
+				this.free_space.y = y;
+			}
+		}
+		if (this.free_space.x + width + 1 < canvas.width) {
+			const ret = { x: this.free_space.x,
+				      y: this.free_space.y,
+				      width, height: font.charHeight
+				    };
+			this.free_space.x += width + 1;
+			return ret;
+		}
+		// i don't have to respect the font metric encoding...
+		// but i will anyway.
+		const true_height = font.charHeight + 1;
+
+		this.free_space.y += true_height;
+		this.free_space.x = width + 1;
+
+		const ret = { x: 0,
+			      y: this.free_space.y,
+			      width, height: font.charHeight
+			    };
+
+		if (this.free_space.y + true_height > canvas.height) {
+
+			// no room left. time to resize.
+			if (this.resized_height === null)
+				this.resized_height = canvas.height;
+			this.resized_height *= 2;
+			// resize must be done in place, because caller still
+			// has a reference to it.
+			const cls = this.constructor;
+			cls.resize_image_inplace(canvas, this.resized_height);
+		}
+
+		return ret;
 	}
 
 	/*
@@ -958,6 +1061,8 @@ class FontPatcher {
 			if (rect.height !== multifont.charHeight)
 				console.warn("bad height for", c);
 		}).bind(multifont);
+		this.context.reserve_char
+			= this.reserve_free_space.bind(this, multifont);
 
 		this.resolve_metrics_loaded();
 
@@ -974,13 +1079,11 @@ class FontPatcher {
 			return image;
 
 		let canvas = image;
-		if (!canvas.getContext) {
-			canvas = document.createElement("canvas");
-			canvas.width = image.width;
-			canvas.height = image.height;
-			const context2d = canvas.getContext("2d");
-			context2d.clearRect(0, 0, canvas.width, canvas.height);
-			context2d.drawImage(image, 0, 0);
+		if (this.resized_height !== null || !canvas.getContext) {
+			const cls = this.constructor;
+			const height
+				= this.resized_height || canvas.height;
+			canvas = cls.resize_image(canvas, height);
 		}
 
 		const ret = localedef.patch_font(canvas, this.context);

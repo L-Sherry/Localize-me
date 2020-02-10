@@ -623,6 +623,16 @@ For each font size, the following happens:
     not possible to change the height of a single character.  Note that all
     colors share the same metrics, so it only needs to be called once for each
     font size.
+  * `reserve_char`: a function that, given a canvas and a width, will find a
+    free spot in the font image, allocate it and return an object with fields
+    `x`, `y`, `width` and `height`. The object can then be passed to
+    `set_char_pos` and drawn upon.  Calling it more than once will allocate
+    multiple spots.
+    If there is no free spot, this function will resize the given canvas,
+    keeping its content.  This function should be called the first time
+    `patch_font` is called, or else, unexpected results may occur, since
+    different colors must have the same layout.
+
 - If `patch_font` is specified, then it is called multiple times for each
   color, as follows: `patch_font(canvas, context)`.
 
