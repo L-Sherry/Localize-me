@@ -587,12 +587,21 @@ For each font size, the following happens:
   * `char_height`, the height of the char of a font, which is 7, 13 or 16.
   * `base_image`, the loaded base image that uses the default color (white).
     note that modifying this object will not affect the game.
+  * `set_base_image`, which is a function that will replace the base image
+    loaded by the game by the image specified as a parameter.
 
 - If `pre_patch_font` is specified, then Localize-Me calls it with the context
   as a parameter: `pre_patch_font(context)`.
-  The callback is free to modify this object, add fields or more, as this
-  object will be reused in the following callbacks.  It is also possible to
-  wait in this asynchronous function.
+  The callback is free to modify the context object, add fields or more, as
+  this object will be reused in the following callbacks.  It is also possible
+  to wait in this asynchronous function.
+
+  In `pre_patch_font`, it is possible to call `set_base_image(image)` which
+  will replace the image loaded by the game with your own image.  Your image
+  must have the same dimensions as the original image and respect the format
+  expected by the game.
+  After `pre_patch_font` completes, the `set_base_image` field will disappear
+  from the context.
 - Localize-Me then hands the white font image to the game, so that it can
   extract font data from the PNG image, such as the position of each character
   and their width.  To do that, the game uses the lines that you can see below

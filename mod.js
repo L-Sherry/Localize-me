@@ -847,6 +847,8 @@ class LocalizeMe {
 	 *		      "char_height" (height of font),
 	 *		      "size_index" (as used by the game) and
 	 *		      "base_image" (the base image of a multifont).
+	 *		      "set_base_image(img)" (replaces base_image before
+	 *		      the games parses it)
 	 *		      This context is carried out to patch_font, so you
 	 *		      may store stuff in there.
 	 *
