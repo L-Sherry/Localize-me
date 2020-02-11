@@ -341,6 +341,7 @@ class JSONPatcher {
 			ret = this.fetch_stuff(thing);
 			ret = ret.then(json => JSON.parse(json));
 			this.url_cache[thing] = ret;
+			ret.then(() => { delete this.url_cache[thing]; });
 		}
 		return ret;
 	}
