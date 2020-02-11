@@ -88,6 +88,12 @@ class GameLocaleConfiguration {
 				resolve(locale);
 			};
 		});
+		// When all locales have been loaded from mods, this resolves
+		// to an locale -> localedef mapping
+		this.all_locales = new Promise(resolve => {
+			this.set_all_locales_ready
+				= () => resolve(this.added_locales);
+		});
 	}
 
 	// Add a custom locale definition.  Can be called any time before the
@@ -136,6 +142,7 @@ class GameLocaleConfiguration {
 			this.localedef_by_index[locale_index] = locale;
 		}
 		this.locale_count = count;
+		this.set_all_locales_ready();
 	}
 
 	/**
@@ -156,6 +163,10 @@ class GameLocaleConfiguration {
 	async get_localedef() {
 		await this.final_locale;
 		return window.ig.LANG_DETAILS[this.final_locale];
+	}
+	/// Get all locales once they are loaded.
+	async get_all_locales() {
+		return this.all_locales;
 	}
 
 	/* 
@@ -935,6 +946,10 @@ class LocalizeMe {
 	 *			  because it references it as
 	 *			  "It's \v[misc.time]", so when it's noon,
 	 *			  it displays "It's It's High Noon".
+	 * - "flag" If set, then display this flag next to the language in the
+	 *	    options.  It can be an URL to an image, an image or canvas,
+	 *	    or a asnyc function returning one.  The flag must be of
+	 *	    size 18x12, like flags in assets/media/font/languages.png.
 	 *
 	 * This function should be called before the game starts to run.
 	 */
@@ -1526,6 +1541,144 @@ class VariablePatcher {
 	}
 }
 
+/*
+ * Patch the flags from the various locales.
+ *
+ * Since flags are icons in a font, this reuses a lot of FontPatcher.
+ */
+class FlagPatcher {
+	constructor(game_locale_config) {
+		this.all_locales_promise
+			= game_locale_config.get_all_locales();
+		// should happen after all_locales_promise
+		this.fontsystem_loaded_promise
+			= game_locale_config.get_final_locale();
+	}
+	static async load_image_from_img_or_url(something) {
+		// This detects both Functions and AsyncFunctions
+		if (something instanceof Function)
+			something = await something();
+		// But something instanceof String does not work... Whatever.
+		if (something.constructor !== String)
+			return something;
+		return new Promise((resolve, reject) => {
+			const img = document.createElement("img");
+			img.onload = () => resolve(img);
+			img.onerror = reject;
+			img.src = something;
+		});
+	}
+	async collect_all_flags() {
+		const cls = this.constructor;
+		const all_localedefs = await this.all_locales_promise;
+		const promises = [];
+		for (const locale in all_localedefs) {
+			const localedef = all_localedefs[locale];
+			const flag = localedef.flag;
+			if (!flag)
+				continue;
+			const promise = cls.load_image_from_img_or_url(flag);
+
+			promises.push(promise.then(img => {
+				return { img, locale, localedef };
+			}));
+		}
+		// give me my Promise.allSettled
+		const flags = [];
+		for (const prom of promises)
+			try {
+				flags.push(await prom);
+			} catch (e) {
+				console.error("error while loading flag", e);
+			}
+		return flags;
+	}
+
+	patch_flags (font) {
+		const patcher = new FontPatcher(font, Promise.resolve({}));
+		patcher.context = {};
+		patcher.prepare_context_for_base_image(font);
+		const context = patcher.context;
+		// pick any flag as a base.
+		const base_char = String.fromCharCode(font.firstChar);
+		const base_rect = context.get_char_pos(base_char);
+		// convert flags into a canvas
+		const canvas
+			= FontPatcher.resize_image(font.data, font.data.height);
+		const context2d = canvas.getContext("2d");
+		for (const flag of this.all_flags) {
+			flag.index = font.indicesX.length;
+			const rect = context.reserve_char(canvas,
+							  base_rect.width);
+			const index = (flag.localedef.localizeme_global_index
+				       + font.firstChar);
+			context.set_char_pos(String.fromCharCode(index), rect);
+			context2d.drawImage(canvas,
+					    base_rect.x, base_rect.y,
+					    base_rect.width, base_rect.height,
+					    rect.x, rect.y,
+					    rect.width, rect.height);
+			context2d.drawImage(flag.img,
+					    rect.x + 1, rect.y + 3,
+					    rect.width - 2, rect.height - 4);
+		}
+		font.data = canvas;
+
+		const add_mappings = this.patch_fontsystem_mappings.bind(this);
+		this.fontsystem_loaded_promise.then(add_mappings);
+	}
+	patch_fontsystem_mappings () {
+		const mappings = {};
+
+		const language_iconset
+			= sc.fontsystem.font.mapping["language-0"][0];
+		for (const flag of this.all_flags) {
+			const index = flag.localedef.localizeme_global_index;
+			mappings["language-"+index] = [language_iconset, index];
+		}
+		sc.fontsystem.font.setMapping(mappings);
+
+		delete this.all_flags;
+	}
+
+	inject_into(lang_font) {
+		FontPatcher.inject_instance(lang_font, "onload",
+					    (old_onload, ignored) => {
+				this.collect_all_flags().then(all_flags => {
+					this.all_flags = all_flags;
+					// calls _loadMetrics
+					old_onload(ignored);
+				});
+			});
+		const me = this;
+		FontPatcher.inject_instance(lang_font, "_loadMetrics",
+					    function (old_loadmetrics, img) {
+				old_loadmetrics(img);
+				me.patch_flags(this);
+			});
+	}
+
+	hook_into_game() {
+		const me = this;
+		ig.module("localize_patch_flags").requires(
+			"impact.base.font"
+		).defines(function() {
+			ig.Font.inject({
+				init: function(path, height,
+					       firstchar, sizeindex,
+					       color, ...future) {
+					if (path === "media/font/languages.png")
+						me.inject_into(this);
+					this.parent(path, height, firstchar,
+						    sizeindex, color,
+						    ...future);
+				}
+			});
+		});
+
+	}
+}
+
 (() => {
 	const game_locale_config = new GameLocaleConfiguration();
 	game_locale_config.hook_into_game();
@@ -1540,6 +1693,9 @@ class VariablePatcher {
 
 	const variable_patcher = new VariablePatcher(game_locale_config);
 	variable_patcher.hook_into_game();
+
+	const flag_patcher = new FlagPatcher(game_locale_config);
+	flag_patcher.hook_into_game();
 
 	window.localizeMe = new LocalizeMe(game_locale_config);
 

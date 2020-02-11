@@ -100,6 +100,13 @@ In top of this, Localize-Me adds the following options and callbacks.
   to e.g. replace some characters by others to work around font issues.
   See *Translations* for details.
 
+- `flag` (AsyncFunction or String or a kind of Image): The flag presented next
+  to your language in the options.  It may be a string, an CanvasImageSource
+  (this includes HTMLCanvasElement, HTMLImageElement and others) or a sync or
+  asynchronous function that returns one of those.
+  The flag must have size 18x12, like the other flags in
+  `assets/media/font/languages.png`.
+
 - `patch_base_font` (Function): This optional function is called as part of the
   PNG font patching process.  It is called once for each font type when the
   base font image (with white text) is loaded. See *PNG fonts* for details.
