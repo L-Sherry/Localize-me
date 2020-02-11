@@ -15,9 +15,11 @@ Uninstallation:
   on a custom locale.
 
 This mod currently handles the following:
-- Adding more languages in the option menu
+- Adding more languages in the option menu, with flags
 - Loading translations and inserting them into the game
-- Optionally patching the PNG fonts to add more characters or improve them.
+- Optionally patching the PNG fonts to add more characters or improve them,
+  and allow importing new characters from other images.
+- Modding some parts of the game that contains hardcoded english texts.
 - Preliminary support for changing the way the game format numbers.
 
 For details on how to create a translation mod, see the Documentation.md file.
