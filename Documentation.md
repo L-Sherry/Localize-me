@@ -100,15 +100,24 @@ In top of this, Localize-Me adds the following options and callbacks.
   to e.g. replace some characters by others to work around font issues.
   See *Translations* for details.
 
-- `patch_font` (Function): This function is called as part of the PNG font
-  patching process.  It is called each time a font image is loaded, and the
-  callback should patch the font accordingly.
+- `patch_base_font` (Function): This optional function is called as part of the
+  PNG font patching process.  It is called once for each font type when the
+  base font image (with white text) is loaded. See *PNG fonts* for details.
+  If `base_patch_font` is not specified but `patch_font` is, then `patch_font`
+  is called instead, due to backward compatibility.  This behavior may be
+  removed in the future.
+- `patch_font` (Function): This optional function is called each time a colored
+  PNG font is loaded.  It is not called for white text unless `patch_base_font`
+  is defined.  If `patch_base_font` is defined but `patch_font` isn't, then
+  Localize-Me will automatically recolor the patched white font returned by
+  `patch_base_font`. If defined, it should patch the PNG font.
 - `pre_patch_font` (AsyncFunction): If your language is selected, then this
-  function is called for each font type before the first call to `patch_font`.
+  function is called for each font type before the first call to
+  `patch_base_font`.
   This function is provided in case asynchronous operations are required (such
-  as loading another image, for example), since `patch_font` cannot be
-  asynchronous.
-
+  as loading another image, for example), since `patch_base_font` and
+  `patch_font` cannot be asynchronous. It is also possible to completely
+  override the font image there.
 
 - `format_number` (Function): If set, then Localize-Me will patch the number
   formatting and use this callback to format numbers. See *Number formatting*
@@ -578,7 +587,7 @@ images.  Especially since the game forces every different color to have the
 same character exactly at the same position.
 
 This is why Localize-Me provides some PNG font patching support, through the
-`pre_patch_font` and `patch_font` callbacks.
+`pre_patch_font`, `patch_base_font` and `patch_font` callbacks.
 
 For each font size, the following happens:
 - Localize-Me intercepts the game's request to load the font and wait for the
