@@ -16,7 +16,7 @@
  *   this part of the code can recover from it by switch back to english
  *   and saving that in localStorage.  It should be noted that localStorage
  *   represent a locale as text (e.g. en_US).
- *   
+ *
  * - Once the "final" language is determined, it is stored in ig.currentLang.
  *   This is the language that will be used for the remaining of the game, and
  *   changing it requires a restart.  We patch an unrelated part of the code
@@ -169,7 +169,7 @@ class GameLocaleConfiguration {
 		return this.all_locales;
 	}
 
-	/* 
+	/*
 	 * patch lang/sc/gui.$locale.json/labels/options/language.group
 	 *
 	 * this is an array indexed by locale indexes, which is used in the
@@ -491,7 +491,7 @@ class JSONPatcher {
 			= CryptoJS.enc.Base64.parse(trans_result.ciphertext);
 		const key = CryptoJS.MD5(orig);
 		const param = CryptoJS.lib.CipherParams.create({ ciphertext,
-							         iv:key});
+								 iv:key});
 		const text = CryptoJS.AES.decrypt(param, key,
 						  { mode: CryptoJS.mode.CBC,
 						    padding: CryptoJS.pad.Pkcs7,
@@ -659,7 +659,7 @@ class JSONPatcher {
 	patch_langfile_from_pack(json, path, pack) {
 		const recurse = (json, dict_path_prefix) =>
 			this.walk_json(json, (value, index) => {
-				const dict_path 
+				const dict_path
 					= dict_path_prefix + "/" + index;
 				if (value.constructor !== String) {
 					recurse(value, dict_path);
@@ -792,7 +792,7 @@ class JSONPatcher {
 			options.success = function(unpatched_json) {
 				const resolve = old_resolve.bind(this);
 				const reject = old_reject.bind(this);
-	
+
 				apply_patch(unpatched_json).then(resolve,
 								 reject);
 			};
@@ -805,7 +805,7 @@ class LocalizeMe {
 	constructor(game_locale_config) {
 		this.game_locale_config = game_locale_config;
 	}
-	
+
 	/*
 	 * Locale name must only contain the language and country,
 	 * options can contains:
@@ -824,10 +824,10 @@ class LocalizeMe {
 	 *		It is also possible to return an entire JSON object
 	 *		for lang files.
 	 * - "url_prefix" is an optional string, which is prepended to all
-	 *		       URL found in a map file.  Using something based
-	 *		       on document.currentScript.src allows your mod
-	 *		       to be relocatable. It should most of the time
-	 *		       end with '/'.
+	 *		  URL found in a map file.  Using something based
+	 *		  on document.currentScript.src allows your mod
+	 *		  to be relocatable. It should most of the time
+	 *		  end with '/'.
 	 * - "missing_cb" an optional function to call when a string has no
 	 *		  translation. parameters are a lang label or string
 	 *		  and the dict path.
@@ -919,17 +919,17 @@ class LocalizeMe {
 	 *		     (number, precision, suffix, template)
 	 *		     'number' is the Number to format
 	 *		     'precision' indicates how much fractional digits
-	 *		                 must be displayed (as in toFixed())
+	 *				must be displayed (as in toFixed())
 	 *		     'units' is either empty, or contains an unit.
-	 *		             currently, only '%', 'm' and 'km' are used.
-	 *		             it should be suffixed or to the number
+	 *			     currently, only '%', 'm' and 'km' are used.
+	 *			     it should be suffixed or to the number
 	 *		     'template' is passed only if 'number_locale' is
-	 *		                defined: this is the number formatted
-	 *		                by toLocaleString as if only
-	 *		                'number_locale' was defined.  It is
-	 *		                this possible to reuse this formatted
-	 *		                number instead of recoding everything
-	 *		                from scratch.
+	 *				defined: this is the number formatted
+	 *				by toLocaleString as if only
+	 *				'number_locale' was defined.  It is
+	 *				this possible to reuse this formatted
+	 *				number instead of recoding everything
+	 *				from scratch.
 	 * - "misc_time_function" If set, then this function will be called
 	 *			  when the game want the value \v[misc.time].
 	 *			  This variable is used in the Golden Revolver
@@ -1706,7 +1706,7 @@ class FlagPatcher {
 		const leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
 		// note: since we accept any file, the first picked pack file
 		// will use en_US, not en_LEA...
-		const tdp 
+		const tdp
 			= a => "lang/sc/gui.en_US.json/labels/title-screen/"+a;
 
 		const sample = { // sample pack
