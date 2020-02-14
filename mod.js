@@ -1563,7 +1563,7 @@ class FlagPatcher {
 		if (something.constructor !== String)
 			return something;
 		return new Promise((resolve, reject) => {
-			const img = document.createElement("img");
+			const img = new Image();
 			img.onload = () => resolve(img);
 			img.onerror = reject;
 			img.src = something;
