@@ -1054,21 +1054,6 @@ class FontPatcher {
 	 * handed back into the game.
 	 */
 	reserve_free_space(font, canvas, width) {
-		console.assert(font.indicesX.length, "must be loaded first");
-		if (this.free_space === null) {
-			this.free_space = { x:0, y:0 };
-			for (let i = 0; i < font.indicesX.length; ++i) {
-				const y = font.indicesY[i];
-				const x = (font.indicesX[i]
-					   + font.widthMap[i] + 2);
-
-				if ((y - this.free_space.y
-				     || x - this.free_space.x) <= 0)
-					continue;
-				this.free_space.x = x;
-				this.free_space.y = y;
-			}
-		}
 		if (this.free_space.x + width + 1 < canvas.width) {
 			const ret = { x: this.free_space.x,
 				      y: this.free_space.y,
@@ -1125,6 +1110,9 @@ class FontPatcher {
 			if (rect.height !== multifont.charHeight)
 				console.warn("bad height for", c);
 		};
+		const char_count = multifont.indicesX.length;
+		this.free_space = { x: multifont.indicesX[char_count - 1],
+				    y: multifont.indicesY[char_count - 1] };
 		this.context.reserve_char
 			= this.reserve_free_space.bind(this, multifont);
 
