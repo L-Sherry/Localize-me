@@ -1110,8 +1110,10 @@ class FontPatcher {
 			if (rect.height !== multifont.charHeight)
 				console.warn("bad height for", c);
 		};
-		const char_count = multifont.indicesX.length;
-		this.free_space = { x: multifont.indicesX[char_count - 1],
+		const char_count = multifont.widthMap.length;
+		this.free_space = { x: multifont.indicesX[char_count - 1]
+				     + multifont.widthMap[char_count - 1]
+				     + 2,
 				    y: multifont.indicesY[char_count - 1] };
 		this.context.reserve_char
 			= this.reserve_free_space.bind(this, multifont);
