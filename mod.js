@@ -748,7 +748,8 @@ class JSONPatcher {
 			relative_path,
 			patch_type: "lang_label"
 		};
-		if (jquery_options.context.constructor === ig.Lang) {
+		if (jquery_options.context
+		    && jquery_options.context.constructor === ig.Lang) {
 			// langfile.
 			ret.url = this.get_replacement_url(jquery_options.url);
 			ret.patch_type = "lang_file";
