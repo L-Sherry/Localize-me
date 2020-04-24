@@ -310,21 +310,6 @@ class JSONPatcher {
 		this.not_found = () => null;
 	}
 
-	// Fetch the thing at url and return its xhr responseText.
-	fetch_stuff(url) {
-		return new Promise((resolve, reject) => {
-			const req = new XMLHttpRequest();
-			req.open("GET", url, true);
-			req.onerror = reject;
-			req.onreadystatechange = () => {
-				if (req.readyState !== req.DONE
-				    || req.status !== 200)
-					return; // reject ?
-				resolve(req.responseText);
-			};
-			req.send();
-		});
-	}
 	/*
 	 * If thing is a string, treat it as an URL and fetch its JSON,
 	 * else assume it is a function and call it without any argument.
@@ -336,13 +321,15 @@ class JSONPatcher {
 		if (thing.constructor !== String)
 			return await thing();
 
-		let ret = this.url_cache[thing];
-		if (!ret) {
-			ret = this.fetch_stuff(thing);
-			ret = ret.then(json => JSON.parse(json));
-			this.url_cache[thing] = ret;
-			ret.then(() => { delete this.url_cache[thing]; });
-		}
+		const cached = this.url_cache[thing];
+		if (cached)
+			return cached;
+
+		const ret = fetch(thing).then(resp => (
+			resp.ok ? resp.json() : Promise.reject(resp)
+		));
+		this.url_cache[thing] = ret;
+		ret.then(() => { delete this.url_cache[thing]; });
 		return ret;
 	}
 
