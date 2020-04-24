@@ -403,11 +403,6 @@ class JSONPatcher {
 	 *	    does not match this string, then the translation is likely
 	 *	    stale and should not be used
 	 * - text: the translated text to use.
-	 * - ciphertext: the translated text, encrypted with AES-CBC with
-	 *		 the key equal to MD5(original text). This idiotic
-	 *		 scheme is mainly here for copyright reasons.
-	 * - mac: a HMAC-MD5 of the translated text with key MD5(original text)
-	 *	  for detecting stale translations and not returning garbage.
 	 *
 	 * If a translation result is unknown, null or undefined is returned.
 	 */
@@ -456,69 +451,6 @@ class JSONPatcher {
 	}
 
 	/**
-	 * Get the HMAC of the given string or CryptoJS.lib.WordArray.
-	 *
-	 * key must be a CryptoJS.lib.WordArray
-	 *
-	 * Returns a CryptoJS.lib.WordArray with the hmacmd5
-	 */
-	hmacmd5(message, key) {
-		/// The loaded CryptoJS has a CryptoJS.HmacMD5 symbol ... that
-		/// does not work. It tries to reference CryptoJS.HMAC, which
-		/// doesn't exist. Hopefully, HMAC isn't complicated to code.
-		const outer = key.clone();
-		const to_words = x => CryptoJS.lib.WordArray.create(x);
-		// pad 16 bytes to 64 -> 48 bytes, which is 12 u32
-		outer.concat(to_words(Array.from({length: 12}, () => 0)));
-		const ip
-			= outer.words
-			       .map((v,i,a) => 0x6a6a6a6a ^ (a[i]^=0x5c5c5c5c));
-		outer.concat(CryptoJS.MD5(to_words(ip).concat(message)));
-		return CryptoJS.MD5(outer);
-	}
-
-	/**
-	 * Decrapt the given string using the given original text.
-	 *
-	 * Return null if the decryption failed.
-	 * May throw exceptions if CryptJS is buggy.
-	 */
-	decrapt_string(trans_result, orig) {
-		// the loaded CryptoJS only supports AES CBC with Pkcs7 and
-		// MD5... This should be more than enough for the "security"
-		// that we need: requiring the game files to get the
-		// translation.
-		const ciphertext
-			= CryptoJS.enc.Base64.parse(trans_result.ciphertext);
-		const key = CryptoJS.MD5(orig);
-		const param = CryptoJS.lib.CipherParams.create({ ciphertext,
-								 iv:key});
-		const text = CryptoJS.AES.decrypt(param, key,
-						  { mode: CryptoJS.mode.CBC,
-						    padding: CryptoJS.pad.Pkcs7,
-						    iv: key}
-		);
-		// This happens if the padding is incorrect, and the last byte
-		// of the decryption is longer than the actual input...
-		if (text.sigBytes < 0)
-			return null;
-		if (trans_result.mac) {
-			// if i don't do this, then calculating the md5 of it
-			// fails.
-			text.clamp();
-			// wait, CryptoJS.HmacMD5 does not work ? Crap.
-			// var correct_mac = CryptoJS.HmacMD5(text, key);
-			const correct_mac = this.hmacmd5(text, key);
-
-			const mac = CryptoJS.enc.Base64.stringify(correct_mac);
-			if (trans_result.mac !== mac)
-				// stale translation
-				return null;
-		}
-		return CryptoJS.enc.Utf8.stringify(text);
-	}
-
-	/**
 	 * Given a translation result, get the translation of the given
 	 * string or lang label.
 	 *
@@ -538,18 +470,9 @@ class JSONPatcher {
 		if (trans_result.orig && orig && trans_result.orig !== orig)
 			// original text has changed, translation is stale.
 			return null;
-		if (trans_result.text)
+		if (trans_result.text !== undefined)
 			return trans_result.text;
-		if (!trans_result.ciphertext)
-			return null;
-		try {
-			return this.decrapt_string(trans_result, orig);
-		} catch (e) {
-			console.error(e);
-			console.error("decryption failed hard, is translation "
-				      + "stale ?");
-			return null;
-		}
+		return null;
 	}
 
 	/**
@@ -609,49 +532,6 @@ class JSONPatcher {
 	}
 
 	/*
-	 * Return a pack suitable for patching langfiles.
-	 *
-	 * This is like get_transpack(), except this also handles if the
-	 * translation pack is a full langfile replacement.  Support for that is
-	 * deprecated.
-	 */
-	async get_langfile_pack(map_file, path, json) {
-		let pack;
-		try {
-			pack = await this.get_transpack(map_file, path, json);
-		} catch (error) {
-			console.warn("failed path", path, error);
-			return this.not_found;
-		}
-		if (pack("DOCTYPE") !== "STATIC-LANG-FILE")
-			return pack; // normal pack.
-
-		console.log("Using a langfile as a packfile is deprecated");
-		// it's not really a pack ... more like a json langfile that
-		// we parsed like a pack, but we can recover.
-		if (pack("feature") !== json["feature"]) {
-			console.error("mismatch between lang file feature :",
-				      pack("feature"), "!=", json["feature"]);
-			return this.not_found;
-		}
-		const labels = pack("labels");
-		return ((prefix, dict_path) => {
-			if (!dict_path.startsWith(prefix)) {
-				console.error("invalid dict path for langfile",
-					      dict_path);
-				return null;
-			}
-			let cursor = labels;
-			for (const component
-			     of dict_path.substr(prefix.length).split("/"))
-				cursor = cursor && cursor[component];
-			if (!cursor && cursor !== "")
-				return null;
-			return cursor;
-		}).bind(null, path + "/labels/");
-	}
-
-	/*
 	 * Assume the json object is a langfile residing at path
 	 * and patch every value in it using the given pack.
 	 *
@@ -683,21 +563,11 @@ class JSONPatcher {
 	 *
 	 * Resolves to a modified json object.
 	 */
-	async patch_langfile(path, json, alt_path) {
+	async patch_langfile(path, json) {
 		const map_file = await this.get_map_file();
 		if (map_file) {
-			const get_langfile_pack = p => (
-				this.get_langfile_pack(map_file, p, json)
-			);
-			let pack = await get_langfile_pack(path);
-			if (pack === this.not_found && alt_path) {
-				pack = await get_langfile_pack(alt_path);
-				if (pack !== this.not_found)
-					console.log("Falling back from", path,
-						    "to", alt_path,
-						    "is deprecated.");
-				path = alt_path;
-			}
+			const pack = await this.get_transpack(map_file, path,
+							      json);
 			this.patch_langfile_from_pack(json, path, pack);
 		}
 		// patch the language list after patching the langfile,
@@ -741,35 +611,19 @@ class JSONPatcher {
 		return new_url;
 	}
 
-	determine_patch_opts(jquery_options, base_path_length) {
-		const relative_path
-			= jquery_options.url.slice(base_path_length);
-		const ret = {
-			relative_path,
-			patch_type: "lang_label"
-		};
-		if (jquery_options.context
-		    && jquery_options.context.constructor === ig.Lang) {
-			// langfile.
-			ret.url = this.get_replacement_url(jquery_options.url);
-			ret.patch_type = "lang_file";
-			ret.relative_path
-				= this.get_replacement_url(relative_path);
-			ret.alternate_relative_path = relative_path;
+	get_patch_opts(jquery_options, base_path_length) {
+		let rel_path = jquery_options.url.slice(base_path_length);
+		if (!(jquery_options.context
+		      && jquery_options.context.constructor === ig.Lang)) {
+			const do_patch
+				= json => this.patch_langlabels(rel_path, json);
+			return { do_patch };
 		}
-		return ret;
-	}
-
-	async apply_patch_options(patch_opts, unpatched_json) {
-		if (patch_opts.patch_type === "lang_label")
-			return this.patch_langlabels(patch_opts.relative_path,
-						     unpatched_json);
-		else {
-			const alt_rel_path = patch_opts.alternate_relative_path;
-			return this.patch_langfile(patch_opts.relative_path,
-						   unpatched_json,
-						   alt_rel_path);
-		}
+		// langfile.  replace tr_TR by from_locale
+		const url = this.get_replacement_url(jquery_options.url);
+		rel_path = this.get_replacement_url(rel_path);
+		const do_patch = json => this.patch_langfile(rel_path, json);
+		return { url, do_patch };
 	}
 
 	hook_into_game() {
@@ -779,15 +633,10 @@ class JSONPatcher {
 			if (!options.url.startsWith(base_path))
 				return options;
 
-			const patch_opts
-				= this.determine_patch_opts(options,
-							    base_path.length);
-			options.url = patch_opts.url || options.url;
-
-			const apply_patch
-				= this.apply_patch_options
-				      .bind(this, patch_opts);
-
+			const { do_patch, url }
+				= this.get_patch_opts(options,
+						      base_path.length);
+			options.url = url || options.url;
 
 			const old_resolve = options.success;
 			const old_reject = options.error;
@@ -795,8 +644,7 @@ class JSONPatcher {
 				const resolve = old_resolve.bind(this);
 				const reject = old_reject.bind(this);
 
-				apply_patch(unpatched_json).then(resolve,
-								 reject);
+				do_patch(unpatched_json).then(resolve, reject);
 			};
 			return options;
 		});
@@ -844,9 +692,6 @@ class LocalizeMe {
 	 *		   (text, translation object)
 	 *
 	 * - "patch_base_font" an optional function called for each loaded font.
-	 *		  If this function isn't defined but patch_font is, then
-	 *		  patch_font is used instead of this method (backward
-	 *		  compatibility from when patch_base_font didn't exist)
 	 *
 	 *		  Can be used to change the encoding of displayed text,
 	 *		  add missing characters or more.  Called with
@@ -896,8 +741,8 @@ class LocalizeMe {
 	 *		  This function can not block, use pre_patch_font to
 	 *		  perform asynchronous operations (like, loading images)
 	 *
-	 * - "pre_patch_font" an optional function that is called before the
-	 *		      first call to patch_font.  Unlike patch_font,
+	 * - "pre_patch_font" an optional function that is called before
+	 *		      patch_base_font.  Unlike patch_base_font,
 	 *		      this one may return a promise and will be called
 	 *		      once per font.  Takes a context containing
 	 *		      "char_height" (height of font),
@@ -905,8 +750,8 @@ class LocalizeMe {
 	 *		      "base_image" (the base image of a multifont).
 	 *		      "set_base_image(img)" (replaces base_image before
 	 *		      the games parses it)
-	 *		      This context is carried out to patch_font, so you
-	 *		      may store stuff in there.
+	 *		      This context is carried out to patch_base_font and
+	 *		      patch_font, so you may store stuff in there.
 	 *
 	 * - "number_locale" If set, then number patching is enabled, and this
 	 *		     locale string will be used as the first parameter
@@ -1204,11 +1049,9 @@ class FontPatcher {
 
 		let func_to_call = null;
 
-		if (is_base_font) {
+		if (is_base_font)
 			func_to_call = localedef.patch_base_font;
-			if (!func_to_call)
-				func_to_call = localedef.patch_font;
-		} else {
+		else {
 			func_to_call = localedef.patch_font;
 			if (!func_to_call)
 				// default implementation that recolors
@@ -1705,18 +1548,7 @@ class FlagPatcher {
 			[tdp("start")]:{ text:"Hi Lea!" },
 			[tdp("continue")]:"Hz!",
 			[tdp("exit")]:{ orig:"Exit", text:"Bye!"},
-			[tdp("options")]:{
-				ciphertext:"bs3vYXPQ/u7rS+SticlLbQ==",
-				mac:"XGMETe2il+2rZk0HoGEv1g=="
-			},
-			[tdp("gamecode")]:{
-				ciphertext:"xmXKwEq0BRO4sztTHS8+3g=="
-			},
-			[tdp("pressStart")]:{ orig: "stale", text:"BAAAAAAAD"},
-			[tdp("load")]:{
-				ciphertext:"q78V2H5p7aWtQYLiXKOMJQ==",
-				mac:"garbagegarbagegarbageg=="
-			}
+			[tdp("pressStart")]:{ orig: "stale", text:"BAAAAAAAD"}
 		};
 		window.localizeMe.add_locale("en_LEA", {
 			from_locale: "en_US",
