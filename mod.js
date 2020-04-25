@@ -378,6 +378,8 @@ class JSONPatcher {
 	 *
 	 * The path must be relative to assets/data.
 	 *
+	 * If patching is disabled, this returns null.
+	 *
 	 * This returns a function mapping a dict path to a translation result.
 	 * a dict path is basically a cursor to a element of a json file.
 	 * e.g. if file hello/world.json contains {"foo":["bar"]},
@@ -393,7 +395,11 @@ class JSONPatcher {
 	 *
 	 * If a translation result is unknown, null or undefined is returned.
 	 */
-	async get_transpack(map_file, json_path, json) {
+	async get_transpack(json_path, json) {
+		const map_file = await this.get_map_file();
+		if (!map_file)
+			return null;
+
 		const url_or_func = map_file(json_path, json);
 		if (!url_or_func)
 			return this.not_found;
@@ -422,13 +428,13 @@ class JSONPatcher {
 
 	/**
 	 * Iterate over all lang labels found in the object and call the
-	 * callback with (lang_label, dict_path).
+	 * callback with (dict_path, lang_label).
 	 * It should be possible to modify the lang_label inside the callback.
 	 */
 	for_each_langlabels(json, dict_path_prefix, callback) {
 		const localedef = this.game_locale_config.get_localedef_sync();
 		if (json !== null && json[localedef.from_locale]) {
-			callback(json, dict_path_prefix);
+			callback(dict_path_prefix, json);
 			return;
 		}
 		this.walk_json(json, (value, index) => {
@@ -499,15 +505,12 @@ class JSONPatcher {
 	 * Resolves to the json parameter, possibly modified.
 	 */
 	async patch_langlabels(path, json) {
-		const map_file = await this.get_map_file();
-		if (!map_file)
-			// native locale
-			return json;
-
-		const pack = await this.get_transpack(map_file, path, json)
+		const pack = await this.get_transpack(path, json)
 				       .catch(() => this.not_found);
+		if (!pack)
+			return json; // native locale
 
-		const patch_lang_label = (lang_label, dict_path) => {
+		const patch_lang_label = (dict_path, lang_label) => {
 			const trans = pack(dict_path, lang_label);
 			lang_label[ig.currentLang]
 				= this.get_text_to_display(trans, lang_label,
@@ -551,18 +554,15 @@ class JSONPatcher {
 	 * Resolves to a modified json object.
 	 */
 	async patch_langfile(path, json) {
-		const map_file = await this.get_map_file();
-		if (map_file) {
-			const pack = await this.get_transpack(map_file, path,
-							      json);
+		const pack = await this.get_transpack(path, json);
+		if (pack)
 			this.patch_langfile_from_pack(json, path, pack);
-		}
 		// patch the language list after patching the langfile,
 		// otherwise, the added languages will be considered
 		// as missing text.
 		if (path.startsWith("lang/sc/gui.")) {
 			const langs = json.labels.options.language.group;
-			if (langs.constructor !== Array) {
+			if (Array.isArray(langs)) {
 				console.error("Could not patch language array",
 					      "game will likely crash !");
 				return json;
