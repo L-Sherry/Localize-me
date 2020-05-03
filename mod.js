@@ -469,22 +469,22 @@ class JSONPatcher {
 	}
 
 	/**
-	 * Given a translation result, get the translation of the given
-	 * string or lang label.
+	 * Given a pack, get the translation of the given string or lang label.
 	 *
 	 * Always returns a string, unlike get_translated_string().
 	 *
 	 * If the translation is unknown, then call the missing callback
 	 * or return the original text prefixed by --.
 	 */
-	get_text_to_display(trans_result, lang_label_or_string, dict_path) {
+	get_text_to_display(pack_function, lang_label_or_string, dict_path) {
+		const result = pack_function(dict_path, lang_label_or_string);
 		const localedef = this.game_locale_config.get_localedef_sync();
-		let ret = this.get_translated_string(trans_result,
+		let ret = this.get_translated_string(result,
 						     lang_label_or_string);
 		if (ret !== null) {
-			if (!localedef.text_filter)
-				return ret;
-			return localedef.text_filter(ret, trans_result);
+			if (localedef.text_filter)
+				return localedef.text_filter(ret, result);
+			return ret;
 		}
 
 		const missing = localedef.missing_cb;
@@ -511,9 +511,8 @@ class JSONPatcher {
 			return json; // native locale
 
 		const patch_lang_label = (dict_path, lang_label) => {
-			const trans = pack(dict_path, lang_label);
 			lang_label[ig.currentLang]
-				= this.get_text_to_display(trans, lang_label,
+				= this.get_text_to_display(pack, lang_label,
 							   dict_path);
 		};
 
@@ -536,8 +535,8 @@ class JSONPatcher {
 					recurse(value, dict_path);
 					return;
 				}
-				let trans = pack(dict_path, value);
-				trans = this.get_text_to_display(trans, value,
+				let trans;
+				trans = this.get_text_to_display(pack, value,
 								 dict_path);
 				json[index] = trans;
 			});
