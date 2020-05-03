@@ -411,36 +411,29 @@ class JSONPatcher {
 	}
 
 	/**
-	 * If 'json' is an Object, call cb(value, key) for each key.
-	 * If 'json' is an Array, call cb(value, index) for each element in it.
-	 * Will ignore anything else.
+	 * Walk recursively into the json object.  This is a prefix walk.
+	 * This recurses into arrays and objects with an API like Array.forEach.
+	 * cb is called with: (value, index, array_or_object, dict_path)
+	 * where, array_or_object[index] === value and dict_path is a
+	 * slash-separated path to the value.
+	 *
+	 * cb is called before recursing into the value. If cb returns a trueish
+	 * value, then this recursion is skipped.
 	 */
-	walk_json(json, cb) {
+	recurse_json(json, dict_path, cb) {
 		if (json === null)
 			return;
-		if (json.constructor === Array)
-			json.forEach(cb);
+		const try_recurse = (value, index) => {
+			const new_dict_path = dict_path + "/" + index;
+			if (!cb(value, index, json, new_dict_path))
+				this.recurse_json(value, new_dict_path, cb);
+		};
+		if (Array.isArray(json))
+			json.forEach(try_recurse);
 		if (json.constructor === Object)
 			for (const index in json)
 				if (json.hasOwnProperty(index))
-					cb(json[index], index);
-	}
-
-	/**
-	 * Iterate over all lang labels found in the object and call the
-	 * callback with (dict_path, lang_label).
-	 * It should be possible to modify the lang_label inside the callback.
-	 */
-	for_each_langlabels(json, dict_path_prefix, callback) {
-		const localedef = this.game_locale_config.get_localedef_sync();
-		if (json !== null && json[localedef.from_locale]) {
-			callback(dict_path_prefix, json);
-			return;
-		}
-		this.walk_json(json, (value, index) => {
-			const sub = dict_path_prefix + "/" + index;
-			this.for_each_langlabels(value, sub, callback);
-		});
+					try_recurse(json[index], index);
 	}
 
 	/**
@@ -499,48 +492,29 @@ class JSONPatcher {
 	}
 
 	/*
-	 * Patch the lang labels in the json object loaded at path
+	 * Patch the lang labels in the json object loaded at file_path
 	 * for the given current locale.
 	 *
 	 * Resolves to the json parameter, possibly modified.
 	 */
-	async patch_langlabels(path, json) {
-		const pack = await this.get_transpack(path, json)
+	async patch_langlabels(file_path, json) {
+		const pack = await this.get_transpack(file_path, json)
 				       .catch(() => this.not_found);
 		if (!pack)
 			return json; // native locale
 
-		const patch_lang_label = (dict_path, lang_label) => {
+		const patch_lang_labels = (obj, index, parent, dict_path) => {
+			if (obj === null || typeof obj !== "object"
+			    || !("en_US" in obj || "langUid" in obj))
+				return false;
 			lang_label[ig.currentLang]
 				= this.get_text_to_display(pack, lang_label,
 							   dict_path);
+			return true;
 		};
 
-		this.for_each_langlabels(json, path, patch_lang_label);
+		this.recurse_json(json, file_path, patch_lang_labels);
 		return json;
-	}
-
-	/*
-	 * Assume the json object is a langfile residing at path
-	 * and patch every value in it using the given pack.
-	 *
-	 * Resolves to the json parameter after modifying it.
-	 */
-	patch_langfile_from_pack(json, path, pack) {
-		const recurse = (json, dict_path_prefix) =>
-			this.walk_json(json, (value, index) => {
-				const dict_path
-					= dict_path_prefix + "/" + index;
-				if (value.constructor !== String) {
-					recurse(value, dict_path);
-					return;
-				}
-				let trans;
-				trans = this.get_text_to_display(pack, value,
-								 dict_path);
-				json[index] = trans;
-			});
-		recurse(json.labels, path + "/labels");
 	}
 
 	/*
@@ -554,8 +528,17 @@ class JSONPatcher {
 	 */
 	async patch_langfile(path, json) {
 		const pack = await this.get_transpack(path, json);
+
+		const patcher = (value, index, json, dict_path) => {
+			if (value.constructor !== String)
+				return;
+			json[index] = this.get_text_to_display(pack, value,
+							       dict_path);
+		};
 		if (pack)
-			this.patch_langfile_from_pack(json, path, pack);
+			this.recurse_json(json.labels, path + "/labels",
+					  patcher);
+
 		// patch the language list after patching the langfile,
 		// otherwise, the added languages will be considered
 		// as missing text.
