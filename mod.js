@@ -498,22 +498,37 @@ class JSONPatcher {
 	 * Resolves to the json parameter, possibly modified.
 	 */
 	async patch_langlabels(file_path, json) {
+		const lang_labels = [];
+		const collect_lang_labels = (obj, index, parent, dict_path) => {
+			if (!obj || typeof obj !== "object"
+			    || !("en_US" in obj || "langUid" in obj))
+				return false;
+			lang_labels.push({ dict_path, lang_label: obj });
+			return true;
+		};
+
+		this.recurse_json(json, file_path, collect_lang_labels);
+
+		// While the game is careful to never block on a resource, mods
+		// are much less inclined to.  Mods can block on a jquery
+		// resource in their postload. And we block resources until we
+		// know which locale to patch, which requires all postload to
+		// finish and the game to start.  You see the deadlock now ?
+		//
+		// As a partial workaround, do not block if the file does not
+		// contain any lang label.
+		if (lang_labels.length === 0)
+			return json; // nothing to patch
+
 		const pack = await this.get_transpack(file_path, json)
 				       .catch(() => this.not_found);
 		if (!pack)
 			return json; // native locale
 
-		const patch_lang_labels = (obj, index, parent, dict_path) => {
-			if (obj === null || typeof obj !== "object"
-			    || !("en_US" in obj || "langUid" in obj))
-				return false;
+		for (const { dict_path, lang_label } of lang_labels)
 			lang_label[ig.currentLang]
 				= this.get_text_to_display(pack, lang_label,
 							   dict_path);
-			return true;
-		};
-
-		this.recurse_json(json, file_path, patch_lang_labels);
 		return json;
 	}
 
