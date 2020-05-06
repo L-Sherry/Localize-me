@@ -562,7 +562,7 @@ class JSONPatcher {
 		// as missing text.
 		if (path.startsWith("lang/sc/gui.")) {
 			const langs = json.labels.options.language.group;
-			if (Array.isArray(langs)) {
+			if (!Array.isArray(langs)) {
 				console.error("Could not patch language array",
 					      "game will likely crash !");
 				return json;
