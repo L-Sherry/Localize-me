@@ -174,6 +174,12 @@ with `/` as a directory separator and a path relative to the `assets/data`
 directory.  Examples are thus `database.json`, `maps/rhombus-square-view.json`
 or `lang/sc/gimmicks.en_US.json`.
 
+As an exceptions, DLC files under `assets/extension` are relative to `assets/`,
+so their `file_path` always begins with `extension/`.
+For example, the `file_path` of the file
+`assets/extension/flying-frobbit/flying-frobbit.json` would be
+`extension/flying-frobbit/flying-frobbit.json`.
+
 for lang files, there are two ways to way to refers to them, since they
 contains the locale in use.  If e.g. you are defining the `nl_NL` locale and
 `from_locale` is set to `de_DE`, then Localize-Me will first look for

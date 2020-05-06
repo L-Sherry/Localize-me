@@ -774,14 +774,19 @@ class JSONPatcher {
 
 	hook_into_game() {
 		const base_path = ig.root + "data/";
+		const base_extension_path = ig.root + "extension/";
 		$.ajaxPrefilter("json", options => {
-
-			if (!options.url.startsWith(base_path))
+			let prefix_length = 0;
+			if (options.url.startsWith(base_path))
+				prefix_length = base_path.length;
+			else if (options.url.startsWith(base_extension_path))
+				prefix_length = ig.root.length;
+			else
 				return options;
 
 			const patch_opts
 				= this.determine_patch_opts(options,
-							    base_path.length);
+							    prefix_length);
 			options.url = patch_opts.url || options.url;
 
 			const apply_patch
