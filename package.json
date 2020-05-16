@@ -4,5 +4,5 @@
 	"homepage": "https://github.com/L-Sherry/Localize-me",
 	"description": "Add support for more locales, languages and translations",
 	"postload": "mod.js",
-	"version": "0.5.2"
+	"version": "0.5.3"
 }
