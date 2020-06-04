@@ -1,5 +1,3 @@
-"use strict";
-
 /**
  * This whole mess deserves an explanation.  When the game loads, the following
  * normally happens:
@@ -1502,65 +1500,60 @@ class FlagPatcher {
 	}
 }
 
-(() => {
-	const game_locale_config = new GameLocaleConfiguration();
-	game_locale_config.hook_into_game();
+const game_locale_config = new GameLocaleConfiguration();
+game_locale_config.hook_into_game();
 
-	const json_patcher = new JSONPatcher(game_locale_config);
-	json_patcher.hook_into_game();
+const json_patcher = new JSONPatcher(game_locale_config);
+json_patcher.hook_into_game();
 
-	FontPatcher.hook_into_game(game_locale_config);
+FontPatcher.hook_into_game(game_locale_config);
 
-	const number_formatter = new NumberFormatter(game_locale_config);
-	number_formatter.hook_into_game();
+const number_formatter = new NumberFormatter(game_locale_config);
+number_formatter.hook_into_game();
 
-	const variable_patcher = new VariablePatcher(game_locale_config);
-	variable_patcher.hook_into_game();
+const variable_patcher = new VariablePatcher(game_locale_config);
+variable_patcher.hook_into_game();
 
-	const flag_patcher = new FlagPatcher(game_locale_config);
-	flag_patcher.hook_into_game();
+const flag_patcher = new FlagPatcher(game_locale_config);
+flag_patcher.hook_into_game();
 
-	window.localizeMe = new LocalizeMe(game_locale_config);
+window.localizeMe = new LocalizeMe(game_locale_config);
 
 
-	if (window.location.search.indexOf("en_LEA") !== -1) { // test
-		const lea = ["Hi", "Lea", "Why", "How", "Sorry"];
-		const pick = ()=>lea[Math.floor(Math.random() * lea.length)];
-		const leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
-		// note: since we accept any file, the first picked pack file
-		// will use en_US, not en_LEA...
-		const tdp
-			= a => "lang/sc/gui.en_US.json/labels/title-screen/"+a;
+if (window.location.search.indexOf("en_LEA") !== -1) { // test
+	const lea = ["Hi", "Lea", "Why", "How", "Sorry"];
+	const pick = () => lea[Math.floor(Math.random() * lea.length)];
+	const leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
+	// note: since we accept any file, the first picked pack file
+	// will use en_US, not en_LEA...
+	const tdp = a => "lang/sc/gui.en_US.json/labels/title-screen/" + a;
 
-		const sample = { // sample pack
-			[tdp("start")]:{ text:"Hi Lea!" },
-			[tdp("continue")]:"Hz!",
-			[tdp("exit")]:{ orig:"Exit", text:"Bye!"},
-			[tdp("pressStart")]:{ orig: "stale", text:"BAAAAAAAD"}
-		};
-		window.localizeMe.add_locale("en_LEA", {
-			from_locale: "en_US",
-			// () => (file_path) => (dict_path) => pack
-			map_file: () => () => () => sample,
-			missing_cb: leaize,
-			language: {
-				en_LEA: "Hi Lea!",
-				en_US: "Lea's English"
-			},
-			text_filter: text => text.replace("z", "i"),
-			patch_font: (source, context) => {
-				if (!context.done) {
-					let ee = context.get_char_pos("\u00e9");
-					context.set_char_pos("e", ee);
-					context.done = true;
-				}
-				return source;
-			},
-			pre_patch_font: () => (
-				new Promise((resolve) => setTimeout(resolve,
-								    5000))
-			)
-		});
-	}
-})();
-
+	const sample = { // sample pack
+		[tdp("start")]: { text: "Hi Lea!" },
+		[tdp("continue")]: "Hz!",
+		[tdp("exit")]: { orig: "Exit", text: "Bye!" },
+		[tdp("pressStart")]: { orig: "stale", text: "BAAAAAAAD" }
+	};
+	window.localizeMe.add_locale("en_LEA", {
+		from_locale: "en_US",
+		// () => (file_path) => (dict_path) => pack
+		map_file: () => () => () => sample,
+		missing_cb: leaize,
+		language: {
+			en_LEA: "Hi Lea!",
+			en_US: "Lea's English"
+		},
+		text_filter: text => text.replace("z", "i"),
+		patch_font: (source, context) => {
+			if (!context.done) {
+				const ee = context.get_char_pos("\u00e9");
+				context.set_char_pos("e", ee);
+				context.done = true;
+			}
+			return source;
+		},
+		pre_patch_font: () => (
+			new Promise((resolve) => setTimeout(resolve, 5000))
+		)
+	});
+}
