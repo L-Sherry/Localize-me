@@ -481,9 +481,10 @@ class JSONPatcher {
 		const missing = localedef.missing_cb;
 		if (missing)
 			ret = missing(lang_label_or_string, dict_path);
-		if (!ret) {
-			ret = (lang_label_or_string[localedef.from_locale]
-			       || lang_label_or_string);
+		if (ret === undefined) {
+			ret = lang_label_or_string[localedef.from_locale];
+			if (ret === undefined)
+				ret = lang_label_or_string;
 			ret = "--" + ret;
 		}
 		return ret;
