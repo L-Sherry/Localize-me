@@ -1,9 +1,0 @@
-{
-	"name": "Localize Me",
-	"license": "MIT",
-	"homepage": "https://github.com/L-Sherry/Localize-me",
-	"description": "Add support for more locales, languages and translations",
-	"postload": "mod.js",
-	"module": true,
-	"version": "0.5.2"
-}

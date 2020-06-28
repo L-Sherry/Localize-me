@@ -433,6 +433,27 @@ then `missing_cb`, if defined, is called with the following parameters:
 a LangLabel, or a string from a lang file.  The default is to prefix the
 original text (in the language specified by `from_locale`) with `--`.
 
+#### CCLoader v3 mod description localization
+
+CCLoader v3 adds the possibility to localize mod names and descriptions.
+Localize-Me can load them either from the mod manifests or from packs.
+
+If the mod manifest has a localized string for the correct locale, then
+Localize-Me will use it, but will still run it through `text_filter` with
+`text_filter(translated_text, {})`.
+
+If the mod manifest does not have a localized string for the current locale,
+but has one for `from_locale`, then the usual translation mechanism is used:
+Localize-Me will request a translation result with a dict path of
+`lang/sc/gui.(from_locale).json/labels/options/modEnabled-(mod-id)/name` for
+the name of the mod, and
+`lang/sc/gui.(from_locale).json/labels/options/modEnabled-(mod-id)/description`
+for its description.
+
+If they are not found, then `missing_cb` will be called as usual, except that
+if `missing_cb` is not defined, the original text will be unchanged, instead
+of being prefixed with `--`.
+
 ## Map file
 
 The game currently sports around 35000 strings to be translated.

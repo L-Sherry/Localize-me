@@ -465,9 +465,11 @@ class JSONPatcher {
 	 * Always returns a string, unlike get_translated_string().
 	 *
 	 * If the translation is unknown, then call the missing callback
-	 * or return the original text prefixed by --.
+	 * or return the original text prefixed by "--", unless skip_missing
+	 * is true, in which case it will be returned unmodified.
 	 */
-	get_text_to_display(pack_function, lang_label_or_string, dict_path) {
+	get_text_to_display(pack_function, lang_label_or_string, dict_path,
+			   skip_missing) {
 		const result = pack_function(dict_path, lang_label_or_string);
 		const localedef = this.game_locale_config.get_localedef_sync();
 		let ret = this.get_translated_string(result,
@@ -485,7 +487,8 @@ class JSONPatcher {
 			ret = lang_label_or_string[localedef.from_locale];
 			if (ret === undefined)
 				ret = lang_label_or_string;
-			ret = "--" + ret;
+			if (!skip_missing)
+				ret = "--" + ret;
 		}
 		return ret;
 	}
@@ -532,6 +535,52 @@ class JSONPatcher {
 	}
 
 	/*
+	 * Patch lang/sc/gui.*.json when used with ccloader v3
+	 *
+	 * This reimplements ccloader v3's localized fields
+	 */
+	patch_ccloader3_mods(json, path, pack) {
+		if (!window.modloader || !window.modloader.loadedMods)
+			return; // not ccloader v3
+		const { from_locale, text_filter }
+			= this.game_locale_config.get_localedef_sync();
+		const { options } = json.labels;
+
+		const localize_field = (maybe_ll, field_name, prefix) => {
+			// technically not a lang label, but close enough
+			if (!maybe_ll)
+				return " ";
+			if (maybe_ll[ig.currentLang])
+				return text_filter(maybe_ll[ig.currentLang],
+						   {});
+			if (maybe_ll.constructor !== String
+			    && maybe_ll[from_locale] === undefined)
+				return maybe_ll["en_US"] || " ";
+
+			const dict_path = `${prefix}/${field_name}`;
+			const text = this.get_text_to_display(pack, maybe_ll,
+							      dict_path, true);
+			return text;
+		};
+
+		window.modloader.loadedMods.forEach((mod, id) => {
+			const modEnabled_id = `modEnabled-${id}`;
+			if (!options[modEnabled_id])
+				return;
+
+			let { title, description } = mod.manifest;
+
+			const prefix
+				= `${path}/labels/options/${modEnabled_id}`;
+			title = localize_field(title || id, "name", prefix);
+			description = localize_field(description, "description",
+						     prefix);
+			options[modEnabled_id].name = title;
+			options[modEnabled_id].description = description;
+		});
+	}
+
+	/*
 	 * Patch the given langfile loaded in json.
 	 *
 	 * path should be relative to assets/data/.
@@ -549,9 +598,13 @@ class JSONPatcher {
 			json[index] = this.get_text_to_display(pack, value,
 							       dict_path);
 		};
-		if (pack)
+		if (pack) {
 			this.recurse_json(json.labels, path + "/labels",
 					  patcher);
+
+			if (path.startsWith("lang/sc/gui."))
+				this.patch_ccloader3_mods(json, path, pack);
+		}
 
 		// patch the language list after patching the langfile,
 		// otherwise, the added languages will be considered
