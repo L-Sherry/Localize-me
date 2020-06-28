@@ -439,6 +439,27 @@ then `missing_cb`, if defined, is called with the following parameters:
 a LangLabel, or a string from a lang file.  The default is to prefix the
 original text (in the language specified by `from_locale`) with `--`.
 
+#### CCLoader v3 mod description localization
+
+CCLoader v3 adds the possibility to localize mod names and descriptions.
+Localize-Me can load them either from the mod manifests or from packs.
+
+If the mod manifest has a localized string for the correct locale, then
+Localize-Me will use it, but will still run it through `text_filter` with
+`text_filter(translated_text, {})`.
+
+If the mod manifest does not have a localized string for the current locale,
+but has one for `from_locale`, then the usual translation mechanism is used:
+Localize-Me will request a translation result with a dict path of
+`lang/sc/gui.(from_locale).json/labels/options/modEnabled-(mod-id)/name` for
+the name of the mod, and
+`lang/sc/gui.(from_locale).json/labels/options/modEnabled-(mod-id)/description`
+for its description.
+
+If they are not found, then `missing_cb` will be called as usual, except that
+if `missing_cb` is not defined, the original text will be unchanged, instead
+of being prefixed with `--`.
+
 ## Map file
 
 The game currently sports around 35000 strings to be translated.
@@ -812,3 +833,15 @@ misc_time_function: () => {
 	return `${date.getHours()}:${date.getMinutes()}`;
 },
 ```
+
+## CCLoader 3 compatibility
+
+This mod currently supports both CCLoader 2 and CCLoader 3 at the same time,
+but Localize Me's identifier is not the same in CCLoader 2 and CCLoader 3.
+
+A translation mod that wishes to uses CCLoader 3 must depend on `localize-me`
+instead of `Localize Me`.  If a translation mod want to be compatible with
+both CCloader v2 and CCLoader v3, it may do so by having both a `ccmod.json`
+depending on `localize-me` and a `package.json` depending on `Localize Me`.
+
+CCLoader v2 support may be dropped in the future.
