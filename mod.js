@@ -686,13 +686,14 @@ class JSONPatcher {
 		const { from_locale, text_filter }
 			= this.game_locale_config.get_localedef_sync();
 		const { options } = json.labels;
+		const true_filter = text_filter ? text_filter : (text => text);
 
 		const localize_field = (maybe_ll, field_name, prefix) => {
 			// technically not a lang label, but close enough
 			if (!maybe_ll)
 				return " ";
 			if (maybe_ll[ig.currentLang])
-				return text_filter(maybe_ll[ig.currentLang],
+				return true_filter(maybe_ll[ig.currentLang],
 						   {});
 			if (maybe_ll.constructor !== String
 			    && maybe_ll[from_locale] === undefined)
