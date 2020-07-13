@@ -441,46 +441,51 @@ class JSONPatcher {
 	 * This function does not support lang labels mappings to array or
 	 * objects.  Thanksfully, these appear to be currently unused.
 	 *
-	 * Returns a string, or null if the translation is unknown.
+	 * Returns a translation result or null if the translation is unknown.
 	 */
-	get_translated_string(trans_result, lang_label_or_string) {
+	get_translation_result(pack_function, dict_path, lang_label_or_string) {
+		const result = pack_function(dict_path, lang_label_or_string);
 		const localedef = this.game_locale_config.get_localedef_sync();
-		if (trans_result === null || trans_result === undefined)
-			return null;
-		if (trans_result.constructor === String)
-			return trans_result;
+		if (result === null || result === undefined)
+			return { result: null, text: null };
+		if (result.constructor === String)
+			return { result, text: result };
 		const orig = (lang_label_or_string[localedef.from_locale]
 			      || lang_label_or_string);
-		if (trans_result.orig && orig && trans_result.orig !== orig)
+		if (result.orig && orig && result.orig !== orig)
 			// original text has changed, translation is stale.
-			return null;
-		if (trans_result.text !== undefined)
-			return trans_result.text;
-		return null;
+			return { result, text: null };
+		if (result.text !== undefined)
+			return { result, text: result.text };
+		return { result: null, text: null };
 	}
 
 	/**
-	 * Given a pack, get the translation of the given string or lang label.
+	 * Given a translated string, get the text to display
 	 *
-	 * Always returns a string, unlike get_translated_string().
+	 * This is the generic post-processing function after finding a trans
+	 * result.
 	 *
-	 * If the translation is unknown, then call the missing callback
+	 * If translated text is non-null, then call text_filter
+	 * with the given trans_result and ignore the other parameters.
+	 *
+	 * If translated_text is null, then call the missing callback
 	 * or return the original text prefixed by "--", unless skip_missing
 	 * is true, in which case it will be returned unmodified.
 	 */
-	get_text_to_display(pack_function, lang_label_or_string, dict_path,
-			   skip_missing) {
-		const result = pack_function(dict_path, lang_label_or_string);
+	get_text_to_display(translated_text, trans_result,
+			    lang_label_or_string, dict_path,
+			    skip_missing) {
 		const localedef = this.game_locale_config.get_localedef_sync();
-		let ret = this.get_translated_string(result,
-						     lang_label_or_string);
-		if (ret !== null) {
+		if (translated_text !== null) {
 			if (localedef.text_filter)
-				return localedef.text_filter(ret, result);
-			return ret;
+				return localedef.text_filter(translated_text,
+							     trans_result);
+			return translated_text;
 		}
 
 		const missing = localedef.missing_cb;
+		let ret = undefined;
 		if (missing)
 			ret = missing(lang_label_or_string, dict_path);
 		if (ret === undefined) {
@@ -490,6 +495,24 @@ class JSONPatcher {
 			if (!skip_missing)
 				ret = "--" + ret;
 		}
+		return ret;
+	}
+
+	/**
+	 * Given a pack, get the translation of the given string or lang label.
+	 *
+	 * Always returns a string, which is already post-processed by
+	 * get_text_to_display().
+	 */
+	get_from_pack(pack_function, lang_label_or_string, dict_path,
+		      skip_missing) {
+		const { result, text }
+			= this.get_translation_result(pack_function, dict_path,
+						      lang_label_or_string);
+		const ret
+			= this.get_text_to_display(text, result,
+						   lang_label_or_string,
+						   dict_path, skip_missing);
 		return ret;
 	}
 
@@ -529,8 +552,8 @@ class JSONPatcher {
 
 		for (const { dict_path, lang_label } of lang_labels)
 			lang_label[ig.currentLang]
-				= this.get_text_to_display(pack, lang_label,
-							   dict_path);
+				= this.get_from_pack(pack, lang_label,
+						     dict_path);
 		return json;
 	}
 
@@ -542,7 +565,7 @@ class JSONPatcher {
 	patch_ccloader3_mods(json, path, pack) {
 		if (!window.modloader || !window.modloader.loadedMods)
 			return; // not ccloader v3
-		const { from_locale, text_filter }
+		const { from_locale }
 			= this.game_locale_config.get_localedef_sync();
 		const { options } = json.labels;
 
@@ -550,17 +573,16 @@ class JSONPatcher {
 			// technically not a lang label, but close enough
 			if (!maybe_ll)
 				return " ";
-			if (maybe_ll[ig.currentLang])
-				return text_filter(maybe_ll[ig.currentLang],
-						   {});
+			const text = maybe_ll[ig.currentLang];
+			if (text)
+				return this.get_text_to_display(text, {});
 			if (maybe_ll.constructor !== String
 			    && maybe_ll[from_locale] === undefined)
 				return maybe_ll["en_US"] || " ";
 
 			const dict_path = `${prefix}/${field_name}`;
-			const text = this.get_text_to_display(pack, maybe_ll,
-							      dict_path, true);
-			return text;
+			return this.get_from_pack(pack, maybe_ll, dict_path,
+						  true);
 		};
 
 		window.modloader.loadedMods.forEach((mod, id) => {
@@ -595,8 +617,8 @@ class JSONPatcher {
 		const patcher = (value, index, json, dict_path) => {
 			if (value.constructor !== String)
 				return;
-			json[index] = this.get_text_to_display(pack, value,
-							       dict_path);
+			json[index] = this.get_from_pack(pack, value,
+							 dict_path);
 		};
 		if (pack) {
 			this.recurse_json(json.labels, path + "/labels",
