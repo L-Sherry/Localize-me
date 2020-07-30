@@ -323,9 +323,7 @@ class JSONPatcher {
 		if (cached)
 			return cached;
 
-		const ret = fetch(thing).then(resp => (
-			resp.ok ? resp.json() : Promise.reject(resp)
-		));
+		const ret = ccmod.resources.loadJSON(thing);
 		this.url_cache[thing] = ret;
 		ret.then(() => { delete this.url_cache[thing]; });
 		return ret;
@@ -563,8 +561,6 @@ class JSONPatcher {
 	 * This reimplements ccloader v3's localized fields
 	 */
 	patch_ccloader3_mods(json, path, pack) {
-		if (!window.modloader || !window.modloader.loadedMods)
-			return; // not ccloader v3
 		const { from_locale }
 			= this.game_locale_config.get_localedef_sync();
 		const { options } = json.labels;
@@ -585,7 +581,7 @@ class JSONPatcher {
 						  true);
 		};
 
-		window.modloader.loadedMods.forEach((mod, id) => {
+		modloader.loadedMods.forEach((mod, id) => {
 			const modEnabled_id = `modEnabled-${id}`;
 			if (!options[modEnabled_id])
 				return;
@@ -1458,12 +1454,7 @@ class FlagPatcher {
 		// But something instanceof String does not work... Whatever.
 		if (something.constructor !== String)
 			return something;
-		return new Promise((resolve, reject) => {
-			const img = new Image();
-			img.onload = () => resolve(img);
-			img.onerror = reject;
-			img.src = something;
-		});
+		return ccmod.resources.loadImage(something);
 	}
 	async collect_all_flags() {
 		const cls = this.constructor;
@@ -1628,8 +1619,7 @@ if (window.location.search.indexOf("en_LEA") !== -1) { // test
 			}
 			return source;
 		},
-		pre_patch_font: () => (
-			new Promise((resolve) => setTimeout(resolve, 5000))
-		)
+		pre_patch_font: () => ccmod.utils.wait(5000)
+
 	});
 }
