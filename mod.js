@@ -323,7 +323,7 @@ class JSONPatcher {
 		if (cached)
 			return cached;
 
-		const ret = ccmod.resources.loadJSON(thing);
+		const ret = ccmod.resources.plain.loadJSON(ccmod.resources.resolvePathToURL(thing));
 		this.url_cache[thing] = ret;
 		ret.then(() => { delete this.url_cache[thing]; });
 		return ret;
