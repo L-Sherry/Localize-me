@@ -1465,18 +1465,33 @@ class FlagPatcher {
 		// should happen after all_locales_promise
 		this.fontsystem_loaded_promise
 			= game_locale_config.get_final_locale();
+		const cls = this.constructor;
+		if (window.ccmod)
+			this.load_image = cls.load_image_ccloader3;
+		else
+			this.load_image = cls.load_image_native;
 	}
-	static async load_image_from_img_or_url(something) {
+	static async load_image_native(url) {
+		return new Promise((resolve, reject) => {
+			const img = new Image;
+			img.onload = () => resolve(img);
+			img.onerror = reject;
+			img.src = url;
+		});
+	}
+	static async load_image_ccloader3(url) {
+		return window.ccmod.resources.loadImage(url);
+	}
+	async load_image_from_img_or_url(something) {
 		// This detects both Functions and AsyncFunctions
 		if (something instanceof Function)
 			something = await something();
 		// But something instanceof String does not work... Whatever.
 		if (something.constructor !== String)
 			return something;
-		return ccmod.resources.loadImage(something);
+		return this.load_image(something);
 	}
 	async collect_all_flags() {
-		const cls = this.constructor;
 		const all_localedefs = await this.all_locales_promise;
 		const promises = [];
 		for (const locale in all_localedefs) {
@@ -1484,7 +1499,7 @@ class FlagPatcher {
 			const flag = localedef.flag;
 			if (!flag)
 				continue;
-			const promise = cls.load_image_from_img_or_url(flag);
+			const promise = this.load_image_from_img_or_url(flag);
 
 			promises.push(promise.then(img => {
 				return { img, locale, localedef };
