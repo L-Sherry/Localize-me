@@ -1654,7 +1654,8 @@ if (window.location.search.indexOf("en_LEA") !== -1) { // test
 			}
 			return source;
 		},
-		pre_patch_font: () => ccmod.utils.wait(5000)
-
+		pre_patch_font: () => (
+			new Promise((resolve) => setTimeout(resolve, 5000))
+		)
 	});
 }
