@@ -306,6 +306,23 @@ class JSONPatcher {
 		// found. This allows callers to either use it blindly or check
 		// if it not_found
 		this.not_found = () => null;
+
+		if (window.ccmod)
+			this.load_json = this.constructor.load_json_ccloader3;
+		else
+			this.load_json = this.constructor.load_json_fetch;
+	}
+
+	static async load_json_fetch(url) {
+		const response = await fetch(url);
+		if (!response.ok)
+			return Promise.reject(response);
+		return response.json();
+	}
+
+	static async load_json_ccloader3(url) {
+		const resolved = window.ccmod.resources.resolvePathToURL(url);
+		return window.ccmod.resources.plain.loadJSON(resolved);
 	}
 
 	/*
@@ -323,7 +340,7 @@ class JSONPatcher {
 		if (cached)
 			return cached;
 
-		const ret = ccmod.resources.plain.loadJSON(ccmod.resources.resolvePathToURL(thing));
+		const ret = this.load_json(thing);
 		this.url_cache[thing] = ret;
 		ret.then(() => { delete this.url_cache[thing]; });
 		return ret;
@@ -561,6 +578,8 @@ class JSONPatcher {
 	 * This reimplements ccloader v3's localized fields
 	 */
 	patch_ccloader3_mods(json, path, pack) {
+		if (!window.modloader)
+			return; // not ccloader v3
 		const { from_locale }
 			= this.game_locale_config.get_localedef_sync();
 		const { options } = json.labels;
@@ -581,7 +600,7 @@ class JSONPatcher {
 						  true);
 		};
 
-		modloader.loadedMods.forEach((mod, id) => {
+		window.modloader.loadedMods.forEach((mod, id) => {
 			const modEnabled_id = `modEnabled-${id}`;
 			if (!options[modEnabled_id])
 				return;
