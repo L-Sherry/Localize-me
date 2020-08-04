@@ -1480,7 +1480,8 @@ class FlagPatcher {
 		});
 	}
 	static async load_image_ccloader3(url) {
-		return window.ccmod.resources.loadImage(url);
+		const resolved = window.ccmod.resources.resolvePathToURL(url);
+		return window.ccmod.resources.plain.loadImage(resolved);
 	}
 	async load_image_from_img_or_url(something) {
 		// This detects both Functions and AsyncFunctions
