@@ -1625,7 +1625,8 @@ window.localizeMe = new LocalizeMe(game_locale_config);
 if (window.location.search.indexOf("en_LEA") !== -1) { // test
 	const lea = ["Hi", "Lea", "Why", "How", "Sorry"];
 	const pick = () => lea[Math.floor(Math.random() * lea.length)];
-	const leaize = l => (l.en_US || l).replace(/[a-z0-9]+/ig, pick);
+	const shortcut = (val, d3fault) => ( val !== undefined ? val : d3fault);
+	const leaize = l => shortcut(l.en_US, l).replace(/[a-z0-9]+/ig, pick);
 	// note: since we accept any file, the first picked pack file
 	// will use en_US, not en_LEA...
 	const tdp = a => "lang/sc/gui.en_US.json/labels/title-screen/" + a;
