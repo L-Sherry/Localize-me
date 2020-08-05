@@ -24,6 +24,7 @@ For example, the game currently defines these locales:
 - `en_US` (English as spoken in the US)
 - `de_DE` (German as spoken in Germany)
 - `zh_CN` (mainland Chinese with simplified characters)
+- `zh_TW` (Chinese with traditional characters (as spoken in Taiwan))
 - `ja_JP` (japan's Japanese)
 - `ko_KR` (Korean as spoken in Korea)
 
@@ -89,9 +90,17 @@ In top of this, Localize-Me adds the following options and callbacks.
   See *Translations* for details.
 
 - `url_prefix` (String): Prefix every URL found in the map file by this.  Using
-  something based on `document.currentScript.src` is advisable.  Note that
-  the map file URL is not prefixed with this value.
+  something based on `document.currentScript.src` (when using non-modules) or
+  `import.meta.url` (when using modules) is advisable.
+  Note that the map file URL is not prefixed with this value.
   See the *Map file* for details.
+
+  Note that CCLoader v3 may impose more restrictions about which URL may be
+  loaded, such as requiring assets to be relative URL or path-absolute URLs.
+  See its documentation about URL rewriting for details.   Most notably,
+  CCLoader v3 also support the `mod://` url scheme, so if your mod is only
+  going to be used with ccloader3, then using `mod://id-of-your-mod/` is
+  probably a good idea.
 
 - `missing_cb` (Function): Localize-Me calls this callback when it finds a text
   does not have a translation, or a stale one. See *Translations* for details.
