@@ -219,8 +219,11 @@ class GameLocaleConfiguration {
 		// added locales.
 		const patch_loaded_globals = function (globals) {
 			const id = index_by_locale(ig.currentLang);
-			if (id !== null)
+			if (id !== null) {
+				if (globals.options === undefined)
+					globals.options = {};
 				globals.options.language = id;
+			}
 			this.parent(globals);
 		};
 		// And we save a 0 if it is an added locale.
