@@ -603,7 +603,7 @@ class JSONPatcher {
 						  true);
 		};
 
-		window.modloader.loadedMods.forEach((mod, id) => {
+		window.modloader.installedMods.forEach((mod, id) => {
 			const modEnabled_id = `modEnabled-${id}`;
 			if (!options[modEnabled_id])
 				return;
