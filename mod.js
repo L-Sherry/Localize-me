@@ -1465,9 +1465,6 @@ class FlagPatcher {
 	constructor(game_locale_config) {
 		this.all_locales_promise
 			= game_locale_config.get_all_locales();
-		// should happen after all_locales_promise
-		this.fontsystem_loaded_promise
-			= game_locale_config.get_final_locale();
 		const cls = this.constructor;
 		if (window.ccmod)
 			this.load_image = cls.load_image_ccloader3;
@@ -1498,6 +1495,11 @@ class FlagPatcher {
 	async collect_all_flags() {
 		const all_localedefs = await this.all_locales_promise;
 		const promises = [];
+
+		const mappings = {};
+		const language_iconset
+			= sc.fontsystem.font.mapping["language-0"][0];
+
 		for (const locale in all_localedefs) {
 			const localedef = all_localedefs[locale];
 			const flag = localedef.flag;
@@ -1505,22 +1507,26 @@ class FlagPatcher {
 				continue;
 			const promise = this.load_image_from_img_or_url(flag);
 
-			promises.push(promise.then(img => {
-				return { img, locale, localedef };
-			}));
+			const index = localedef.localizeme_global_index;
+			mappings["language-"+index] = [language_iconset, index];
+
+			promises.push(promise.then(img => ({ img, index })));
 		}
-		// give me my Promise.allSettled
+
+		sc.fontsystem.font.setMapping(mappings);
 		const flags = [];
+		// give me my Promise.allSettled
 		for (const prom of promises)
 			try {
 				flags.push(await prom);
 			} catch (e) {
 				console.error("error while loading flag", e);
 			}
+
 		return flags;
 	}
 
-	patch_flags (font) {
+	static patch_flags (font, all_flags) {
 		const patcher = new FontPatcher(font, Promise.resolve({}));
 		patcher.context = {};
 		patcher.prepare_context_for_base_image(font);
@@ -1532,55 +1538,43 @@ class FlagPatcher {
 		const canvas
 			= FontPatcher.resize_image(font.data, font.data.height);
 		const context2d = canvas.getContext("2d");
-		for (const flag of this.all_flags) {
-			flag.index = font.indicesX.length;
+		for (const { index, img } of all_flags) {
 			const rect = context.reserve_char(canvas,
 							  base_rect.width);
-			const index = (flag.localedef.localizeme_global_index
-				       + font.firstChar);
-			context.set_char_pos(String.fromCharCode(index), rect);
+			const fake_char
+				= String.fromCharCode(index + font.firstChar);
+			context.set_char_pos(fake_char, rect);
 			context2d.drawImage(canvas,
 					    base_rect.x, base_rect.y,
 					    base_rect.width, base_rect.height,
 					    rect.x, rect.y,
 					    rect.width, rect.height);
-			context2d.drawImage(flag.img,
+			context2d.drawImage(img,
 					    rect.x + 1, rect.y + 3,
 					    rect.width - 2, rect.height - 4);
 		}
 		font.data = canvas;
-
-		const add_mappings = this.patch_fontsystem_mappings.bind(this);
-		this.fontsystem_loaded_promise.then(add_mappings);
 	}
-	patch_fontsystem_mappings () {
-		const mappings = {};
-
-		const language_iconset
-			= sc.fontsystem.font.mapping["language-0"][0];
-		for (const flag of this.all_flags) {
-			const index = flag.localedef.localizeme_global_index;
-			mappings["language-"+index] = [language_iconset, index];
-		}
-		sc.fontsystem.font.setMapping(mappings);
-
-		delete this.all_flags;
-	}
-
 	inject_into(lang_font) {
 		FontPatcher.inject_instance(lang_font, "onload",
 					    (old_onload, ignored) => {
 				this.collect_all_flags().then(all_flags => {
+					// here, the font system is already
+					// initialized, because of guaranteed
+					// promise asynchronousness.
 					this.all_flags = all_flags;
 					// calls _loadMetrics
 					old_onload(ignored);
 				});
 			});
-		const me = this;
+		const patch_flags = font => {
+			this.constructor.patch_flags(font, this.all_flags);
+			delete this.all_flags;
+		};
 		FontPatcher.inject_instance(lang_font, "_loadMetrics",
 					    function (old_loadmetrics, img) {
 				old_loadmetrics(img);
-				me.patch_flags(this);
+				patch_flags(this);
 			});
 	}
 
