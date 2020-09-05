@@ -76,23 +76,44 @@ class GameLocaleConfiguration {
 		// Total number of locales in the game, including the native
 		// ones.
 		this.locale_count = 0;
+		// A list of functions to call once the final locale is known.
+		// Used by code that have timing constraints that cannot wait
+		// for another main loop iteration.  Called with (localedef).
+		this.final_localedef_watchers = [];
 		// Until the game determines the language to use for this run,
 		// this is a promise.  After which, it is the localedef used
 		// by the game.
-		this.final_localedef = new Promise(resolve => {
-			this.set_final_localedef = (localedef) => {
-				console.log("final language set to ",
-					    ig.currentLang);
-				this.final_localedef = localedef;
-				resolve(localedef);
-			};
-		});
+		this.final_localedef = new Promise(resolve => (
+			this.final_localedef_watchers.push(resolve)
+		));
+
 		// When all locales have been loaded from mods, this resolves
 		// to an locale -> localedef mapping
 		this.all_locales = new Promise(resolve => {
 			this.set_all_locales_ready
 				= () => resolve(this.added_locales);
 		});
+	}
+
+	// Add a function to call when the final locale is known.  This will
+	// propagate immediately (unlike waiting for promises) and should be
+	// used for code that should run before things are patched, or things
+	// that don't need to be asynchronous.
+	add_localedef_watcher(func) {
+		if (this.final_localedef_watchers !== null)
+			this.final_localedef_watchers.push(func);
+		else
+			func(this.final_localedef);
+	}
+	// Set the final locale and call the watchers.
+	set_final_localedef() {
+		const locale = ig.currentLang;
+		console.log("final language set to ", locale);
+		const localedef = window.ig.LANG_DETAILS[locale];
+		this.final_localedef = localedef;
+		const array_of_watchers = this.final_localedef_watchers;
+		this.final_localedef_watchers = null;
+		array_of_watchers.map(func => func(localedef));
 	}
 
 	// Add a custom locale definition.  Can be called any time before the
@@ -282,10 +303,10 @@ class GameLocaleConfiguration {
 		});
 
 
-		const set_final_localedef = this.set_final_localedef.bind(this);
+		const set_final_localedef = () => this.set_final_localedef();
 		const init_lang = function() {
+			set_final_localedef();
 			this.parent();
-			set_final_locale(ig.LANG_DETAILS[ig.currentLang]);
 		};
 
 		// ig.Lang, to find out when the locale is finally known.
@@ -312,22 +333,61 @@ class JSONPatcher {
 		// if it not_found
 		this.not_found = () => null;
 
-		if (window.ccmod)
+		this.replace_url = false;
+		if (window.ccmod) {
 			this.load_json = this.constructor.load_json_ccloader3;
-		else
+			game_locale_config.add_localedef_watcher((localedef) =>
+				// No time to wait here: the final localedef
+				// is known inside the ig.Lang constructor and
+				// the langfiles generators must be set before
+				// ig.Lang loads them.
+				this.prepare_ccloader3_generators(localedef)
+			);
+		} else {
 			this.load_json = this.constructor.load_json_fetch;
+			this.replace_url = true;
+		}
 	}
 
+	// Load a JSON without using ccloader v3
 	static async load_json_fetch(url) {
 		const response = await fetch(url);
 		if (!response.ok)
 			return Promise.reject(response);
 		return response.json();
 	}
-
+	// Load an unpatched JSON using ccloader v3
 	static async load_json_ccloader3(url) {
 		const resolved = window.ccmod.resources.resolvePathToURL(url);
 		return window.ccmod.resources.plain.loadJSON(resolved);
+	}
+
+	// Prepare ccloader3 to generate lang files for the current locale on
+	// the fly.  ccloader3 will of course apply any mod-provided patch for
+	// the added locales, on top of the one generated here.  This allows
+	// mods to translate their langfiles themselves.
+	prepare_ccloader3_generators(localedef) {
+		if (!localedef.map_file || !localedef.from_locale)
+			return; // not an added locale.
+		// This could look at ig.langFileList, except there is no
+		// guarantee that some smartass mod tries to add stuff to it
+		// in the ig.Lang constructor or something.  Especially since
+		// this code will be called in the ig.Lang constructor.
+		const regex = new RegExp("data/lang/sc/[^.]+\\." +
+					 ig.currentLang + "\\.json");
+		const generator = this.langfile_generator_ccloader3.bind(this);
+		window.ccmod.resources.jsonGenerators.add(regex, generator);
+	}
+
+	// Generate a langfile by loading the from_locale one and patching it.
+	async langfile_generator_ccloader3(context) {
+		const rel_url
+			= this.get_replacement_url(context.requestedAsset);
+		console.assert(rel_url !== context.requestedAsset
+			       && rel_url.startsWith("data/"));
+		const json = await window.ccmod.resources.loadJSON(rel_url);
+		const file_path = rel_url.slice("data/".length);
+		return this.patch_langfile(file_path, json);
 	}
 
 	/*
@@ -674,8 +734,6 @@ class JSONPatcher {
 	 * Returns a possibly modified url.
 	 */
 	get_replacement_url(url) {
-		if (!ig.currentLang)
-			console.error("need to patch url without locale set");
 		const localedef = window.ig.LANG_DETAILS[ig.currentLang];
 
 		if (!localedef || !localedef.from_locale)
@@ -696,6 +754,9 @@ class JSONPatcher {
 				= json => this.patch_langlabels(rel_path, json);
 			return { do_patch };
 		}
+		if (!this.replace_url)
+			// this file will be generated. Just watch Ỽ⸌⎵⸍
+			return {};
 		// langfile.  replace tr_TR by from_locale
 		const url = this.get_replacement_url(jquery_options.url);
 		rel_path = this.get_replacement_url(rel_path);
@@ -717,6 +778,8 @@ class JSONPatcher {
 
 			const { do_patch, url }
 				= this.get_patch_opts(options, prefix_length);
+			if (!do_patch)
+				return options;
 			options.url = url || options.url;
 
 			const old_resolve = options.success;
@@ -1241,7 +1304,8 @@ class NumberFormatter {
 	constructor(game_locale_config) {
 		// this may stay null if we don't need to patch anything.
 		this.localedef = null;
-		game_locale_config.get_localedef().then(localedef => {
+
+		game_locale_config.add_localedef_watcher(localedef => {
 			if (localedef.format_number
 			    || localedef.number_locale) {
 				// we sometimes need to unparse numbers, so
@@ -1432,7 +1496,7 @@ class NumberFormatter {
 class VariablePatcher {
 	constructor (game_locale_config) {
 		this.misctime_func = null;
-		game_locale_config.get_localedef().then(localedef => {
+		game_locale_config.add_localedef_watcher(localedef => {
 			this.misc_time_function = localedef.misc_time_function;
 		});
 	}
