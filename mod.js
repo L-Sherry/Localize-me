@@ -77,13 +77,14 @@ class GameLocaleConfiguration {
 		// ones.
 		this.locale_count = 0;
 		// Until the game determines the language to use for this run,
-		// this is a promise.  After which, it is the language used
+		// this is a promise.  After which, it is the localedef used
 		// by the game.
-		this.final_locale = new Promise((resolve) => {
-			this.set_final_locale = (locale) => {
-				console.log("final language set to ", locale);
-				this.final_locale = locale;
-				resolve(locale);
+		this.final_localedef = new Promise(resolve => {
+			this.set_final_localedef = (localedef) => {
+				console.log("final language set to ",
+					    ig.currentLang);
+				this.final_localedef = localedef;
+				resolve(localedef);
 			};
 		});
 		// When all locales have been loaded from mods, this resolves
@@ -144,23 +145,24 @@ class GameLocaleConfiguration {
 	}
 
 	/**
-	 * Get the language that the game will use for the remaining of this
+	 * Return a promise that resolves when the final language is known.
+	 *
+	 * Note that this useless method is only provided because *cough*
+	 * someone *cough* is poking here and depends on it.
+	 */
+	async get_final_locale () {
+		console.warn("This method is deprecated ¯\\_(ツ)_/¯");
+		await this.final_localedef;
+		return ig.currentLang;
+	}
+	/**
+	 * Get the localedef that the game will use for the remaining of this
 	 * session.
 	 *
-	 * If unknown, a promise is returned, else, a locale name is returned.
-	 * Note that, when the game is loaded, the same information is
-	 * available at ig.currentLang.  During loading, however,
-	 * ig.currentLang might be incorrect.
+	 * If unknown, a promise is returned, else a localedef is returned.
 	 */
-	get_final_locale () {
-		return this.final_locale;
-	}
-	get_localedef_sync() {
-		return window.ig.LANG_DETAILS[this.final_locale];
-	}
-	async get_localedef() {
-		await this.final_locale;
-		return window.ig.LANG_DETAILS[this.final_locale];
+	get_localedef() {
+		return this.final_localedef;
 	}
 	/// Get all locales once they are loaded.
 	async get_all_locales() {
@@ -187,7 +189,7 @@ class GameLocaleConfiguration {
 				continue;
 			}
 			const lang_name = this.added_locales[locale].language;
-			language_list.push(lang_name[this.final_locale]
+			language_list.push(lang_name[ig.currentLang]
 					   || lang_name[locale]
 					   || "ERROR NO LANGUAGE");
 		}
@@ -280,10 +282,10 @@ class GameLocaleConfiguration {
 		});
 
 
-		const set_final_locale = this.set_final_locale.bind(this);
+		const set_final_localedef = this.set_final_localedef.bind(this);
 		const init_lang = function() {
 			this.parent();
-			set_final_locale(ig.currentLang);
+			set_final_locale(ig.LANG_DETAILS[ig.currentLang]);
 		};
 
 		// ig.Lang, to find out when the locale is finally known.
@@ -463,7 +465,7 @@ class JSONPatcher {
 	 */
 	get_translation_result(pack_function, dict_path, lang_label_or_string) {
 		const result = pack_function(dict_path, lang_label_or_string);
-		const localedef = this.game_locale_config.get_localedef_sync();
+		const localedef = this.game_locale_config.get_localedef();
 		if (result === null || result === undefined)
 			return { result: null, text: null };
 		if (result.constructor === String)
@@ -494,7 +496,7 @@ class JSONPatcher {
 	get_text_to_display(translated_text, trans_result,
 			    lang_label_or_string, dict_path,
 			    skip_missing) {
-		const localedef = this.game_locale_config.get_localedef_sync();
+		const localedef = this.game_locale_config.get_localedef();
 		if (translated_text !== null) {
 			if (localedef.text_filter)
 				return localedef.text_filter(translated_text,
@@ -583,8 +585,7 @@ class JSONPatcher {
 	patch_ccloader3_mods(json, path, pack) {
 		if (!window.modloader)
 			return; // not ccloader v3
-		const { from_locale }
-			= this.game_locale_config.get_localedef_sync();
+		const { from_locale } = this.game_locale_config.get_localedef();
 		const { options } = json.labels;
 
 		const localize_field = (maybe_ll, field_name, prefix) => {
