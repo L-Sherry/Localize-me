@@ -947,6 +947,22 @@ class LocalizeMe {
 	add_locale(name, options) {
 		this.game_locale_config.add_locale_definition(name, options);
 	}
+	/*
+	 * Register a function to call when the current language is known.
+	 *
+	 * The game only determines the language to use in its main(), shortly
+	 * after ccloader's postload phase.  Once that happen, func() will be
+	 * called without any argument.  The current language for the remaining
+	 * of the game will be ig.currentLang.
+	 *
+	 * Note: it is easy to make a promise out of this, using
+	 * new Promise(localizeMe.register_language_known.bind(localizeMe));
+	 * or
+	 * new Promise(resolve => localizeMe.register_language_known(resolve));
+	 */
+	register_locale_chosen(func) {
+		this.game_locale_config.add_localedef_watcher(() => func());
+	}
 }
 
 /*
