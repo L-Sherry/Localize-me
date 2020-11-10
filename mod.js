@@ -333,7 +333,7 @@ class JSONPatcher {
 		// if it not_found
 		this.not_found = () => null;
 
-		this.replace_url = false;
+		this.generate_lang_file = false;
 		if (window.ccmod) {
 			this.load_json = this.constructor.load_json_ccloader3;
 			game_locale_config.add_localedef_watcher((localedef) =>
@@ -345,7 +345,6 @@ class JSONPatcher {
 			);
 		} else {
 			this.load_json = this.constructor.load_json_fetch;
-			this.replace_url = true;
 		}
 	}
 
@@ -368,7 +367,12 @@ class JSONPatcher {
 	// mods to translate their langfiles themselves.
 	prepare_ccloader3_generators(localedef) {
 		if (!localedef.map_file || !localedef.from_locale)
-			return; // not an added locale.
+			// Not an added locale.  Lang files still need to have
+			// their language list patched.
+			return;
+
+		this.generate_lang_file = true;
+
 		// This could look at ig.langFileList, except there is no
 		// guarantee that some smartass mod tries to add stuff to it
 		// in the ig.Lang constructor or something.  Especially since
@@ -754,7 +758,7 @@ class JSONPatcher {
 				= json => this.patch_langlabels(rel_path, json);
 			return { do_patch };
 		}
-		if (!this.replace_url)
+		if (this.generate_lang_file)
 			// this file will be generated. Just watch Ỽ⸌⎵⸍
 			return {};
 		// langfile.  replace tr_TR by from_locale
