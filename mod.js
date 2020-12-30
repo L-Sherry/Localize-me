@@ -166,17 +166,6 @@ class GameLocaleConfiguration {
 	}
 
 	/**
-	 * Return a promise that resolves when the final language is known.
-	 *
-	 * Note that this useless method is only provided because *cough*
-	 * someone *cough* is poking here and depends on it.
-	 */
-	async get_final_locale () {
-		console.warn("This method is deprecated ¯\\_(ツ)_/¯");
-		await this.final_localedef;
-		return ig.currentLang;
-	}
-	/**
 	 * Get the localedef that the game will use for the remaining of this
 	 * session.
 	 *
