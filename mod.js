@@ -323,7 +323,7 @@ class JSONPatcher {
 		this.not_found = () => null;
 
 		this.generate_lang_file = false;
-		if (window.ccmod) {
+		if (window.ccmod && window.ccmod.resources) {
 			this.load_json = this.constructor.load_json_ccloader3;
 			game_locale_config.add_localedef_watcher((localedef) =>
 				// No time to wait here: the final localedef
@@ -636,7 +636,7 @@ class JSONPatcher {
 	 * This reimplements ccloader v3's localized fields
 	 */
 	patch_ccloader3_mods(json, path, pack) {
-		if (!window.modloader)
+		if (!window.modloader || !window.modloader.installedMods)
 			return; // not ccloader v3
 		const { from_locale } = this.game_locale_config.get_localedef();
 		const { options } = json.labels;
@@ -1540,7 +1540,7 @@ class FlagPatcher {
 		this.all_locales_promise
 			= game_locale_config.get_all_locales();
 		const cls = this.constructor;
-		if (window.ccmod)
+		if (window.ccmod && window.ccmod.resources)
 			this.load_image = cls.load_image_ccloader3;
 		else
 			this.load_image = cls.load_image_native;
