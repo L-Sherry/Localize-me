@@ -12,6 +12,9 @@
 		"de_DE": "Fügt Unterstützung für mehr Lokalen, Sprachen und Übersetzungen hinzu",
 		"ru_RU": "Мод для создания дополнительных региональных настроек, языков и переводов"
 	},
+	"icons": {
+		"24": "icon.png"
+	},
 	"license": "MIT",
 	"homepage": "https://github.com/L-Sherry/Localize-Me",
 	"postload": "mod.js"
