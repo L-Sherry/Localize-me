@@ -6,6 +6,9 @@
 		"fr_FR":"Régionalisez-Moi",
 		"de_DE":"Lokalisiert mich"
 	},
+	"dependencies": {
+		"crosscode": ">= 1.4.0"
+	},
 	"description": {
 		"en_US": "Add support for more locales, languages and translations",
 		"fr_FR": "Ajoute la gestion de plus de locales, de languages et de traductions",

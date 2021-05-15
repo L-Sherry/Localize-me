@@ -3,8 +3,9 @@
  * normally happens:
  *
  * - Before the game's main() has a chance to run, we patch the ig.LANG_DETAILS
- *   (which contains the locale information) and sc.LANGUAGE, which
- *   contain a mapping from indexes to locales. These indexes are used in the
+ *   (which contains the locale information), sc.LANGUAGE_MAP (which
+ *   contain a mapping from indexes to locales) and sc.LANGUAGE (which contain
+ *   a map of pseudo-language names to indexes). These indexes are used in the
  *   settings dialogs. These are typically not available when the game's code
  *   is loaded, but only later during initialisation of main's dependencies.
  *
@@ -23,56 +24,40 @@
  *   in.
  *
  * - The game continues to load, and starts to initialize its options in
- *   sc.OptionModel's constructor.  This is where the mess begins.
- *   These is a game option named "language" that duplicate what's in
- *   localStorage, except it's an integer and not a string, because that's
- *   easier to handle in OptionModel.  The game has a mapping from this
- *   integer to a string, in a local variable that we can't access.
- *   Duplicating it would be too fragile.  The constructor first initializes
- *   "language" to it's default value, which is normally 0, but i think previous
- *   versions of the game could leave it unset.
- *
- * - Then, it uses the internal mapping to convert the final language into
- *   an integer.  This code has the property that if the final language is
- *   unknown to the mapping, then "language" is left unmodified.  So if this a
- *   locale added by us, "language" may be 0 or it may be undefined, in which
- *   case we better patch this quickly, before the game crashes.
+ *   sc.OptionModel's constructor.  This is where the mess begins.  These is a
+ *   game option named "language" that duplicate what's in localStorage, except
+ *   it's an integer and not a string, because that's easier to handle in
+ *   OptionModel.  The game has a mapping from this integer to a string, and we
+ *   patch it (it is only exported as sc.LANGUAGE_MAP since CrossCode 1.4 after
+ *   intense lobbying). The constructor uses the mapping to convert the final
+ *   language into an integer.
  *
  * - Right after that, it calls code (let's call it setOption, which is much
- *   clearer than its actual name _checkSystemSettings), that... translate the
- *   "language" integer into a locale name using the internal mapping, before
- *   storing it in localStorage.  This setOption() thing is tricky, because it
- *   is used in loads of places other than the constructor.  But say that we
- *   cannot detect this case reliably, so we allow "language" values that do
- *   not match the final language at this point.
+ *   clearer than its actual name, _checkSystemSettings), that... translate the
+ *   "language" integer into a locale name with the mapping and store the
+ *   locale name in localStorage.
  *
  * - The game continue to load, and loads the file containing both savefiles
  *   and game options (or select default options).  After that, it calls
- *   onStorageGlobalLoad(), which the options that were loaded.
- *   it will update the options from what was loaded and then it will call...
- *   setOption() on them. Yep.  We patch onStorageGlobalLoad to patch the
- *   "language" mess there, because it is only called during initialization.
+ *   onStorageGlobalLoad(), with the options that were loaded, which may
+ *   include the "language" integer.  It will update the options from what was
+ *   loaded and then it will call...  setOption() on them. Yep.
  *
  * - If the user goes into the options and select a language, then setOption()
  *   is also called in this case.  The user basically clicked on an integer,
- *   and this function is responsible for storing it into localStorage as well
- *   as the options.
+ *   and this function is responsible for storing it into localStorage and to
+ *   the save file.
  *
  * - When the game wants to save options, it calls onStorageGlobalSave, which
  *   we also patch.  We do not want to save our added locales's integer into
  *   the save file, because the game cannot recover from that if localize-me
- *   gets uninstalled.  So we always save 0 and we make it that
- *   onStorageGlobalLoad ignores the saved option if the final locale is a
- *   custom one.
+ *   gets uninstalled.  So when a custom locale is used, we always delete the
+ *   "language" option when saving and we ignore it in onStorageGlobalLoad.
  */
 class GameLocaleConfiguration {
 	constructor() {
 		// locale definitions here.  the native ones are not present.
-		this.added_locales = {};
-		// native locales are mapped to null, because we don't know
-		// their indexes.  It can also be used to distinguish between
-		// added locales and completely unknown indexes.
-		this.localedef_by_index = {};
+		this.added_locales = new Map;
 		// Total number of locales in the game, including the native
 		// ones.
 		this.locale_count = 0;
@@ -120,7 +105,7 @@ class GameLocaleConfiguration {
 	// patch_game_locale_definitions() is called, which happen after the
 	// game starts but before main().
 	add_locale_definition(name, localedef) {
-		if (name in this.added_locales) {
+		if (this.added_locales.has(name)) {
 			console.error("Language " + name + " added twice");
 			return;
 		}
@@ -129,7 +114,7 @@ class GameLocaleConfiguration {
 				      + " is added too late !");
 			return;
 		}
-		this.added_locales[name] = localedef;
+		this.added_locales.set(name, localedef);
 	}
 
 	// Called during the initialisation of the game.  The final locale
@@ -137,29 +122,20 @@ class GameLocaleConfiguration {
 	patch_game_locale_definitions () {
 		let count = 0;
 		for (const locale in window.ig.LANG_DETAILS) {
-			if (this.added_locales[locale]) {
+			if (this.added_locales.delete(locale))
 				console.warn("Language " + locale
 					     + " already there");
-				delete this.added_locales[locale];
-			}
 			count++;
 		}
-		for (const lang in window.sc.LANGUAGE) {
-			// lang is not a locale name... this would have made
-			// things much simpler if it was...
-			const locale_index = window.sc.LANGUAGE[lang];
-			this.localedef_by_index[locale_index] = null;
-		}
-
-		const added = Object.keys(this.added_locales);
+		const added = Array.from(this.added_locales.keys());
 		added.sort();
 		for (const locale of added) {
-			const options = this.added_locales[locale];
+			const options = this.added_locales.get(locale);
 			const locale_index = count++;
 			options.localizeme_global_index = locale_index;
 			window.ig.LANG_DETAILS[locale] = options;
 			window.sc.LANGUAGE["LOCALIZEME"+locale] = locale_index;
-			this.localedef_by_index[locale_index] = locale;
+			window.sc.LANGUAGE_MAP[locale_index] = locale;
 		}
 		this.locale_count = count;
 		this.set_all_locales_ready();
@@ -189,7 +165,7 @@ class GameLocaleConfiguration {
 		for (let patched = language_list.length;
 		     patched < this.locale_count;
 		     ++patched) {
-			const locale = this.localedef_by_index[patched];
+			const locale = window.sc.LANGUAGE_MAP[patched];
 			if (!locale) {
 				console.error("language array out of sync ?",
 					      "patched ", patched, " out of ",
@@ -198,94 +174,59 @@ class GameLocaleConfiguration {
 				language_list.push("ERROR");
 				continue;
 			}
-			const lang_name = this.added_locales[locale].language;
+			const lang_name
+				= this.added_locales.get(locale).language;
 			language_list.push(lang_name[ig.currentLang]
 					   || lang_name[locale]
 					   || "ERROR NO LANGUAGE");
 		}
 	}
 
-	// Will only work for added locales, we can't get to the others.
-	get_index_of_locale(locale) {
-		const localedef = this.added_locales[locale];
-		if (!localedef)
-			return null;
-		return localedef.localizeme_global_index;
-	}
-
 	hook_into_game() {
 
 		// ig.LANG_DETAILS defined in game.config
-		// sc.LANGUAGE_ICON_MAPPING may need an update if we want flags
-		// one day.
-		// sc.LANGUAGE defined in game.feature.model.options-model
+		// sc.LANGUAGE and sc.LANGUAGE_MAP defined in
+		// game.feature.model.options-model
 		ig.module("localize_put_locales").requires(
 			"game.config",
 			"game.feature.model.options-model"
 		).defines(this.patch_game_locale_definitions.bind(this));
 
-		const localedef_by_index = this.localedef_by_index;
-		const index_by_locale = this.get_index_of_locale.bind(this);
+		const added_locales = this.added_locales;
 
-		// We completely ignore the locale from the save file for
-		// added locales.
 		const patch_loaded_globals = function (globals) {
-			const id = index_by_locale(ig.currentLang);
-			if (id !== null) {
-				if (globals.options === undefined)
-					globals.options = {};
-				globals.options.language = id;
+			// We completely ignore the locale from the save file
+			// for added locales. However, if the save file
+			// contains an invalid locale, we fix it, because we
+			// are such nice guys (or rather, we are probably
+			// responsible for this mess, because we originaly
+			// did this years ago)
+
+			if (globals.options) {
+				if (added_locales.has(ig.currentLang)) {
+					delete globals.options.language;
+				} else if (globals.options.language) {
+					const { language } = globals.options;
+					if (!window.sc.LANGUAGE_MAP[language])
+						globals.options.language = 0;
+				}
 			}
 			this.parent(globals);
 		};
-		// And we save a 0 if it is an added locale.
+		// And we delete "language" too when saving, if it is an added
+		// locale.
 		const patch_saved_globals = function (globals) {
 			this.parent(globals);
-			const locale_index = globals.options["language"];
-			if (localedef_by_index[locale_index])
-				globals.options["language"] = 0;
-		};
-
-		// Hack up the function called to check and set parameters,
-		// either initialized on startup, loaded from the save file or
-		// manually selected by the user. We can't really tell.
-		const patched_check_settings = function(setting) {
-			if (setting !== "language")
-				return this.parent(setting);
-
-			// This should not happen anymore, on the latest game
-			// versions.
-			if (!this.values.hasOwnProperty("language"))
-				this.values.language = 0;
-
-			let locale = localedef_by_index[this.values.language];
-
-			// Previous localize-me versions saved the locale index
-			// in the options.  If the index does not match a known
-			// locale, then recover from it quickly before bad
-			// things happens.
-			if (locale === undefined) {
-				console.log("Recovered from missing locale");
-				this.values.language = 0;
-				locale = null;
-			}
-
-			if (locale === null)
-				// native locale, we don't have access to
-				// the mapping...
-				return this.parent(setting);
-
-			localStorage.setItem("IG_LANG", locale);
-			console.log("Locale set to " + locale
-				    + " in localStorage");
-			return undefined;
+			const locale_index = globals.options.language;
+			const locale = window.sc.LANGUAGE_MAP[locale_index];
+			if (added_locales.has(locale))
+				delete globals.options.language;
 		};
 
 		ig.module("localize_patch_up_option_model").requires(
 			"game.feature.model.options-model"
 		).defines(function() {
 			sc.OptionModel.inject({
-				_checkSystemSettings : patched_check_settings,
 				onStorageGlobalLoad : patch_loaded_globals,
 				onStorageGlobalSave : patch_saved_globals,
 			});
@@ -1574,8 +1515,7 @@ class FlagPatcher {
 		const language_iconset
 			= sc.fontsystem.font.mapping["language-0"][0];
 
-		for (const locale in all_localedefs) {
-			const localedef = all_localedefs[locale];
+		for (const localedef of all_localedefs.values()) {
 			const flag = localedef.flag;
 			if (!flag)
 				continue;
