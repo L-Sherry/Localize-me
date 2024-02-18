@@ -1,18 +1,19 @@
 {
-	"id": "localize-me",
-	"version": "0.6.0",
-	"title": {
-		"en_US":"Localize Me",
-		"fr_FR":"Régionalisez-Moi",
-		"de_DE":"Lokalisiert mich"
-	},
-	"description": {
-		"en_US": "Add support for more locales, languages and translations",
-		"fr_FR": "Ajoute la gestion de plus de locales, de languages et de traductions",
-		"de_DE": "Fügt Unterstützung für mehr Lokalen, Sprachen und Übersetzungen hinzu",
-		"ru_RU": "Мод для создания дополнительных региональных настроек, языков и переводов"
-	},
-	"license": "MIT",
-	"homepage": "https://github.com/L-Sherry/Localize-Me",
-	"postload": "mod.js"
+  "id": "localize-me",
+  "version": "0.6.0",
+  "title": {
+    "en_US": "Localize Me",
+    "fr_FR": "Régionalisez-Moi",
+    "de_DE": "Lokalisiert mich"
+  },
+  "description": {
+    "en_US": "Add support for more locales, languages and translations",
+    "fr_FR": "Ajoute la gestion de plus de locales, de languages et de traductions",
+    "de_DE": "Fügt Unterstützung für mehr Lokalen, Sprachen und Übersetzungen hinzu",
+    "ru_RU": "Мод для создания дополнительных региональных настроек, языков и переводов"
+  },
+  "repository": "https://github.com/L-Sherry/Localize-Me",
+  "tags": ["library", "language"],
+  "authors": ["L-Sherry", "dmitmel"],
+  "postload": "mod.js"
 }
